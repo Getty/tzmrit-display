@@ -18,11 +18,19 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import psutil
 
 LINUX = sys.platform.startswith("linux")
+WINDOWS = sys.platform == "win32"
+
+# procStart on Windows holds .NET DateTime ticks: 100 ns units since
+# 0001-01-01, in local time. Verified against a live session - the value
+# matches psutil's create_time to the microsecond.
+_TICKS_PER_SECOND = 10 ** 7
+_UNIX_EPOCH_SECONDS = 62_135_596_800  # 0001-01-01 .. 1970-01-01
 
 SESSION_DIR = Path.home() / ".claude" / "sessions"
 
@@ -60,19 +68,46 @@ def _proc_start(pid: int) -> str | None:
         return None
 
 
+def _windows_start_ticks(pid: int) -> tuple[int, int] | None:
+    """Process start time as .NET ticks, in both local and UTC reading.
+
+    Claude Code stores the local-time value; the UTC variant is accepted as
+    well so a future change of the writer does not make every session vanish.
+    """
+    try:
+        created = psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+    local = datetime.fromtimestamp(created)
+    local_ticks = int((local - datetime(1, 1, 1)).total_seconds() * _TICKS_PER_SECOND)
+    utc_ticks = int((created + _UNIX_EPOCH_SECONDS) * _TICKS_PER_SECOND)
+    return local_ticks, utc_ticks
+
+
 def _is_live(pid: int, expected_start: object) -> bool:
     """Is this session's process still the one that wrote the file?
 
-    On Linux `procStart` is compared exactly - that rules out a recycled PID
-    being mistaken for a live session.
+    On Linux `procStart` is compared exactly, on Windows as .NET ticks with a
+    small tolerance - both rule out a recycled PID being mistaken for a live
+    session.
 
-    Elsewhere the stored value is in an unknown format, so it is ignored and
-    the check falls back to: the process exists and still looks like Claude.
-    That is weaker against PID reuse, but it never hides a running session,
-    which is the failure that would actually matter here.
+    Elsewhere (or when the value does not parse) the stored value is ignored
+    and the check falls back to: the process exists and still looks like
+    Claude. That is weaker against PID reuse, but it never hides a running
+    session, which is the failure that would actually matter here.
     """
     if LINUX and expected_start is not None:
         return str(expected_start) == str(_proc_start(pid))
+    if WINDOWS and expected_start is not None:
+        try:
+            expected = int(str(expected_start))
+        except (TypeError, ValueError):
+            expected = None
+        if expected is not None:
+            ticks = _windows_start_ticks(pid)
+            if ticks is None:
+                return False
+            return any(abs(expected - t) <= 2 * _TICKS_PER_SECOND for t in ticks)
     try:
         proc = psutil.Process(pid)
         name = (proc.name() or "").lower()

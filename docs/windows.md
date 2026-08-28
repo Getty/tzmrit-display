@@ -1,13 +1,43 @@
-# Windows support — status and checklist
+# Windows support
+
+Verified on real hardware: Windows 11, panel `33c3:7792`
+(D215-NOR-FL7707N-9.16inch-hor, firmware 3.2) on `COM3`. Windows binds the
+panel with its built-in `usbser.sys` — no driver install needed. The dashboard
+ran at a steady 1 fps with ~70 KB frames, sessions view included.
 
 The panel protocol itself is platform independent: it is a serial port and
 JPEG frames. `panel.py`, `render.py` and `theme.py` contain no OS assumptions,
 and pyserial reports the same `vid`/`pid`/`manufacturer` fields on Windows
 (the device is just called `COM3` instead of `/dev/ttyACM0`).
 
-The platform specific parts have been made portable, but **nothing below has
-run on real Windows hardware yet**. This file is the checklist for that first
-run.
+## Installing
+
+Three ways, pick one:
+
+1. **The installer.** `display-panel-setup-<version>.exe` — no Python, no git
+   required. Installs per-user (no admin prompt), registers an uninstaller in
+   *Apps & Features*, and offers autostart at logon with or without the Claude
+   sessions view. Build it yourself with `packaging\build.bat` (needs Python
+   3.10+ and NSIS, `winget install NSIS.NSIS`).
+
+2. **From a checkout:** run `install.bat`. It creates `.venv`, installs the
+   package, checks that the panel answers, and puts a shortcut in the Startup
+   folder (`pythonw.exe`, so no console window). `uninstall.bat` reverses all
+   of it and blanks the panel.
+
+3. **Manually:**
+
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\pip install -e .
+   .venv\Scripts\display-panel info
+   ```
+
+   The install must be editable (`-e`): the fonts are resolved relative to the
+   package and are not copied into site-packages.
+
+If the port is busy, the vendor application is probably still running — it
+holds the COM port exclusively.
 
 ## What was adapted
 
@@ -15,67 +45,48 @@ run.
 |---|---|---|
 | Load average | `os.getloadavg()` | does not exist — the LOAD tile is dropped, DISK takes the slot |
 | CPU temperature | `psutil.sensors_temperatures()` | not available in psutil — TEMP tile dropped |
-| Process liveness | exact `procStart` compare via `/proc/<pid>/stat` | falls back to `psutil` (process exists and looks like Claude) |
+| Process liveness | exact `procStart` compare via `/proc/<pid>/stat` | `procStart` compare as .NET ticks (see below) |
 | Root filesystem | `/` | `Path.home().anchor` → `C:\` |
-| Autostart | systemd user service | Task Scheduler (see below) |
+| Autostart | systemd user service | Startup-folder shortcut (installer or `install.bat`) |
 
 With no temperature sensor and no load average, the metric set becomes
 CPU / RAM / NET↑ / NET↓ / DISK — five columns instead of six. Both layouts
 handle that; the column width is computed, not hard coded.
 
-## To verify on the first run
+## `procStart` on Windows
 
-1. **Does the port open at all?**
-   `display-panel info` should print model, geometry and firmware. Windows
-   binds CDC-ACM devices with the built-in `usbser.sys`; no driver install
-   should be needed. If the port is busy, the vendor application is probably
-   still running — it holds the port exclusively.
+On Linux the field holds clock ticks from `/proc/<pid>/stat`. On Windows it
+holds **.NET `DateTime` ticks** — 100 ns units since 0001-01-01, in local
+time. Verified against a live session: the value matches
+`psutil.Process(pid).create_time()` to the microsecond.
 
-2. **Is the image oriented correctly?**
-   `display-panel preview -o test.png` then `display-panel image test.png`.
-   The rotation is derived from the device's own `angle` field, so it should
-   behave identically — but this is worth one look.
+`_is_live()` therefore compares the stored value against psutil's start time
+(2 s tolerance, UTC reading accepted as well), which restores the protection
+against a recycled PID being shown as a live session — the same guarantee the
+exact `/proc` compare gives on Linux. A value that does not parse as an
+integer falls back to the weak check (process exists and looks like Claude).
 
-3. **What does `procStart` look like?** ← *the one real unknown*
-   ```
-   type %USERPROFILE%\.claude\sessions\*.json
-   ```
-   On Linux this field holds clock ticks from `/proc`. On Windows the format
-   is unknown. Right now `_is_live()` ignores the value off Linux and only
-   checks that the process exists and looks like Claude. If the Windows value
-   turns out to be comparable (for example a filetime that matches
-   `psutil.Process(pid).create_time()`), tighten the check — that restores
-   protection against a recycled PID being shown as a live session.
+## Verified on first run
 
-4. **Does `--claude` find the sessions?**
-   `display-panel run --claude`. If the list stays empty although sessions are
-   running, check that `%USERPROFILE%\.claude\sessions\` is the right path and
-   that the JSON carries `pid`, `name`, `cwd` and `status`.
+* `display-panel info` prints model, geometry, firmware over `COM3`.
+* Rendering and fonts work; the metric set degrades to five tiles as designed.
+* `--claude` finds running sessions in `%USERPROFILE%\.claude\sessions\`,
+  including status and memory (child processes — MCP servers — included).
+* Continuous `run`: 1.01 fps sustained, ~70 KB per frame.
+* The PyInstaller build (`packaging\display-panel.spec`) finds the fonts
+  because the frozen layout mirrors the checkout layout (`_internal\fonts`).
 
-5. **Memory including MCP servers**
-   `psutil.Process(pid).children(recursive=True)` works on Windows, but the
-   process tree may look different (npm wrappers, `cmd.exe` shims). Compare
-   the reported figure against Task Manager once.
-
-## Autostart via Task Scheduler
-
-There is no systemd. A scheduled task at logon does the same job:
-
-```powershell
-$py = "$env:USERPROFILE\dev\display\.venv\Scripts\pythonw.exe"
-$action  = New-ScheduledTaskAction -Execute $py `
-           -Argument "-m display_panel run --claude" `
-           -WorkingDirectory "$env:USERPROFILE\dev\display"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "display-panel" -Action $action -Trigger $trigger
-```
-
-`pythonw.exe` rather than `python.exe` keeps a console window from appearing.
+Worth one look on a new panel model: the image orientation. The rotation is
+derived from the device's own `angle` field (`to_wire()`), same code path as
+on Linux — but angle=90 hardware has never been seen.
 
 ## Known gaps
 
 * The keepalive requirement is unchanged: without a running process the panel
-  blanks. A scheduled task that exits will take the image with it.
+  blanks. Log off and the image goes with it — that is what autostart at
+  logon is for.
 * Sleep and hibernate are untested. The device may need to be re-enumerated
-  after resume; `Restart=on-failure` has no Task Scheduler equivalent unless
-  the task is configured to restart on failure.
+  after resume; the process may need a restart then.
+* A frozen `display-panelw.exe` has no console: errors are invisible. If the
+  panel stays dark, run `display-panel.exe run -v` (the console twin) once to
+  see why.

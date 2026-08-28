@@ -1,6 +1,6 @@
 [project]
 name = "display-panel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Linux system monitor for HONGTAI USB LCD panels (33c3:7791/7792)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,11 +20,18 @@ display-panel = "display_panel.cli:main"
 dev = ["pytest>=7.0"]
 
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["display_panel"]
+
+# The version has no home in the repo - it is derived from the git tag
+# (v0.2.0 -> 0.2.0; between releases: 0.2.1.dev3+g<hash>). Releasing is
+# creating the tag, nothing more. fallback_version covers tarball checkouts
+# without git history.
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

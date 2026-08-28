@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 
 import pytest
@@ -10,9 +11,19 @@ from display_panel.claude_sessions import (
     Session,
     _fmt_age,
     _proc_start,
+    _windows_start_ticks,
     list_sessions,
     summarize,
 )
+
+LINUX = sys.platform.startswith("linux")
+
+
+def own_start_token():
+    """The procStart value Claude Code would store for this test process."""
+    if LINUX:
+        return _proc_start(os.getpid())
+    return str(_windows_start_ticks(os.getpid())[0])
 
 
 def write_session(directory, pid, **overrides):
@@ -31,6 +42,7 @@ def write_session(directory, pid, **overrides):
 
 
 class TestProcStart:
+    @pytest.mark.skipif(not LINUX, reason="/proc is Linux-only")
     def test_reads_own_start_time(self):
         # Field 22 of /proc/self/stat must be a number
         value = _proc_start(os.getpid())
@@ -42,7 +54,7 @@ class TestProcStart:
 
 class TestListSessions:
     def test_reads_live_session(self, tmp_path):
-        write_session(tmp_path, os.getpid(), procStart=_proc_start(os.getpid()))
+        write_session(tmp_path, os.getpid(), procStart=own_start_token())
         sessions = list_sessions(tmp_path)
         assert len(sessions) == 1
         assert sessions[0].project == "example"
@@ -63,7 +75,7 @@ class TestListSessions:
 
     def test_broken_json_is_ignored(self, tmp_path):
         (tmp_path / "123.json").write_text("{broken", encoding="utf-8")
-        write_session(tmp_path, os.getpid(), procStart=_proc_start(os.getpid()))
+        write_session(tmp_path, os.getpid(), procStart=own_start_token())
         assert len(list_sessions(tmp_path)) == 1
 
     def test_missing_directory_is_not_an_error(self, tmp_path):
@@ -71,7 +83,7 @@ class TestListSessions:
 
     def test_urgent_sessions_come_first(self, tmp_path):
         pid = os.getpid()
-        start = _proc_start(pid)
+        start = own_start_token()
         # All on the same live PID, only the status differs
         for name, status in [("a", "idle"), ("b", "requires_action"), ("c", "busy")]:
             data = {
@@ -169,28 +181,63 @@ class TestPlatformPortability:
         monkeypatch.setattr(cs, "LINUX", False)
         assert cs._proc_start(os.getpid()) is None
 
-    def test_liveness_falls_back_to_psutil_off_linux(self, monkeypatch):
-        """Without /proc the stored procStart is in an unknown format.
-
-        It must be ignored rather than compared, otherwise every session would
-        look dead on Windows.
-        """
+    def test_liveness_falls_back_to_psutil_when_unparseable(self, monkeypatch):
+        """A procStart in an unknown format must be ignored rather than
+        compared, otherwise every session would look dead."""
         from display_panel import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
-        assert cs._is_live(os.getpid(), "some-windows-format")
-        assert not cs._is_live(9_999_996, "some-windows-format")
+        assert cs._is_live(os.getpid(), "some-unknown-format")
+        assert not cs._is_live(9_999_996, "some-unknown-format")
 
-    def test_session_listing_works_off_linux(self, tmp_path, monkeypatch):
+    def test_session_listing_works_without_platform_probe(self, tmp_path, monkeypatch):
+        """On a platform with neither /proc nor the ticks check (say macOS)
+        the value is ignored entirely."""
         from display_panel import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", False)
         write_session(tmp_path, os.getpid(), procStart="131234567890000000")
         sessions = cs.list_sessions(tmp_path)
         assert len(sessions) == 1, "a live session must not vanish off Linux"
 
-    def test_recycled_pid_detection_is_linux_only(self, tmp_path, monkeypatch):
-        """The exact procStart check is the stronger guarantee - keep it where
-        it is available."""
+    def test_recycled_pid_detection_on_linux(self, tmp_path, monkeypatch):
         from display_panel import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", True)
         write_session(tmp_path, os.getpid(), procStart="999999999")
         assert cs.list_sessions(tmp_path) == []
+
+
+class TestWindowsTicks:
+    """procStart on Windows: .NET local-time ticks of the process start.
+
+    _windows_start_ticks only uses psutil, so these run on every platform
+    with WINDOWS monkeypatched on.
+    """
+
+    def test_matching_ticks_keep_the_session(self, tmp_path, monkeypatch):
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", True)
+        local_ticks = cs._windows_start_ticks(os.getpid())[0]
+        write_session(tmp_path, os.getpid(), procStart=str(local_ticks))
+        assert len(cs.list_sessions(tmp_path)) == 1
+
+    def test_utc_reading_is_accepted_too(self, monkeypatch):
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", True)
+        utc_ticks = cs._windows_start_ticks(os.getpid())[1]
+        assert cs._is_live(os.getpid(), str(utc_ticks))
+
+    def test_recycled_pid_is_dropped(self, tmp_path, monkeypatch):
+        """A parseable but wrong tick count means: different process."""
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", True)
+        write_session(tmp_path, os.getpid(), procStart="131234567890000000")
+        assert cs.list_sessions(tmp_path) == []
+
+    def test_dead_process_is_dropped(self, monkeypatch):
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", True)
+        assert not cs._is_live(9_999_995, "639235445713023500")

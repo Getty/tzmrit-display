@@ -33,3 +33,8 @@ __pycache__/
 
 # Preview images from `display-panel preview`
 preview*.png
+
+# Installer build output (packaging\build.bat)
+packaging/build/
+packaging/dist/
+packaging/*.exe

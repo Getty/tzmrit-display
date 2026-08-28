@@ -63,20 +63,25 @@ sudo udevadm control --reload && sudo udevadm trigger
 
 The protocol is just a serial port and JPEG frames, so nothing about it is
 Linux specific — and the platform specific probes (load average, temperature
-sensors, `/proc`) have been made portable. Installation is the same, minus the
-`dialout` group:
+sensors, `/proc`) have been made portable. Windows binds the panel with its
+built-in `usbser.sys`, so no driver install is needed. Close the vendor
+application first — it holds the port exclusively.
+
+The easiest path is the installer, `display-panel-setup-<version>.exe`: no
+Python required, per-user install, uninstaller in *Apps & Features*, optional
+autostart at logon. Build it with `packaging\build.bat` (needs NSIS).
+
+From a checkout it is one command:
 
 ```powershell
 git clone https://github.com/Getty/tzmrit-display.git
 cd tzmrit-display
-python -m venv .venv
-.venv\Scripts\pip install -e .
-.venv\Scripts\display-panel info
+install.bat
 ```
 
-Windows binds the panel with its built-in `usbser.sys`, so no driver install
-should be needed. Close the vendor application first — it holds the port
-exclusively. For autostart use Task Scheduler instead of systemd.
+`install.bat` sets up a virtualenv, verifies the panel answers, and puts an
+autostart shortcut in the Startup folder; `uninstall.bat` reverses it.
+Details and verified-hardware notes: [docs/windows.md](docs/windows.md).
 
 > **Status: untested on real hardware.** The code paths exist and are covered
 > by tests against a simulated Windows environment, but nobody has run it on
