@@ -1,0 +1,2 @@
+claude: true
+prompt: "Drain the display-panel board. Delegate behavior-relevant work to display-panel-worker; run pytest to verify; never create a git tag or trigger a release. Stop when nothing actionable remains."

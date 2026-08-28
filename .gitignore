@@ -38,3 +38,7 @@ preview*.png
 packaging/build/
 packaging/dist/
 packaging/*.exe
+
+# karr materialized task view -- never commit
+tasks/
+config.yml
