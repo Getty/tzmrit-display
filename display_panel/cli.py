@@ -17,9 +17,10 @@ from .sources import SystemSource
 
 log = logging.getLogger("display_panel")
 
-# The split layout has room for four metrics; the network rates go first
-# because they say the least about the state of the machine.
-SPLIT_METRICS = ("cpu", "ram", "temp", "load")
+# The split layout has room for four metrics. This is a preference order, not
+# a fixed set: temperature and load average are unavailable on Windows, so
+# disk usage moves up rather than leaving a gap.
+SPLIT_METRICS = ("cpu", "ram", "temp", "load", "disk", "net_down", "net_up")
 
 
 def _compose(src, renderer, with_claude):
@@ -27,11 +28,13 @@ def _compose(src, renderer, with_claude):
     metrics = src.sample()
     if not with_claude:
         return renderer.render(metrics, src.footer())
-    chosen = {k: metrics[k] for k in SPLIT_METRICS if k in metrics}
-    if len(chosen) < 4:  # without a temperature sensor the next metric moves up
-        for k, v in metrics.items():
-            if k not in chosen and len(chosen) < 4:
-                chosen[k] = v
+    chosen = {}
+    for key in SPLIT_METRICS:
+        if key in metrics and len(chosen) < 4:
+            chosen[key] = metrics[key]
+    for key, metric in metrics.items():  # anything unusual still fills a gap
+        if key not in chosen and len(chosen) < 4:
+            chosen[key] = metric
     sessions = list_sessions()
     return renderer.render_split(chosen, sessions, summarize(sessions), src.footer())
 

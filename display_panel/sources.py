@@ -6,12 +6,21 @@ import os
 import shutil
 import socket
 import time
+from pathlib import Path
 from collections import deque
 from dataclasses import dataclass, field
 
 import psutil
 
 HISTORY = 90  # samples per metric
+
+# Windows has neither a load average nor CPU temperature sensors via psutil.
+# Both are probed rather than assumed, so the metric set adapts per platform.
+HAS_LOADAVG = hasattr(os, "getloadavg")
+
+# "/" is ambiguous on Windows; the home directory's anchor gives C:\ there
+# and "/" on Unix.
+ROOT_PATH = Path.home().anchor or "/"
 
 
 @dataclass
@@ -56,8 +65,16 @@ def _human_bytes(n: float) -> str:
 
 
 def _cpu_temperature() -> float | None:
+    """CPU package temperature, or None where the platform offers none.
+
+    psutil only ships sensors_temperatures() on Linux and FreeBSD, so the
+    attribute itself may be missing.
+    """
+    probe = getattr(psutil, "sensors_temperatures", None)
+    if probe is None:
+        return None
     try:
-        temps = psutil.sensors_temperatures()
+        temps = probe()
     except Exception:
         return None
     for chip in ("coretemp", "k10temp", "zenpower", "acpitz"):
@@ -85,8 +102,10 @@ class SystemSource:
             "ram": Metric("ram", "RAM", warn=85, crit=95, scale_max=100),
             "net_up": Metric("net_up", "NET", arrow="up"),
             "net_down": Metric("net_down", "NET", arrow="down"),
-            "load": Metric("load", "LOAD", warn=self.cores, crit=self.cores * 1.5),
         }
+        if HAS_LOADAVG:
+            self.metrics["load"] = Metric(
+                "load", "LOAD", warn=self.cores, crit=self.cores * 1.5)
         if has_temp:
             temp = Metric("temp", "TEMP", warn=75, crit=88, scale_max=100)
             # Slot temperature in between RAM and network
@@ -96,7 +115,9 @@ class SystemSource:
                 if k == "ram":
                     ordered["temp"] = temp
             self.metrics = ordered
-        else:
+        # Fill the sixth slot with disk usage whenever a sensor is missing, so
+        # the layout keeps its column count on every platform.
+        if not has_temp or not HAS_LOADAVG:
             self.metrics["disk"] = Metric("disk", "DISK", warn=85, crit=95, scale_max=100)
 
         psutil.cpu_percent(interval=None)  # discard the priming call
@@ -135,13 +156,14 @@ class SystemSource:
         m["net_down"].text = _human_bytes(down)
         m["net_down"].sub = "B/s"
 
-        load1 = os.getloadavg()[0]
-        m["load"].push(load1)
-        m["load"].text = f"{load1:.2f}"
-        m["load"].sub = f"{self.cores} cores"
+        if "load" in m:
+            load1 = os.getloadavg()[0]
+            m["load"].push(load1)
+            m["load"].text = f"{load1:.2f}"
+            m["load"].sub = f"{self.cores} cores"
 
         if "disk" in m:
-            du = shutil.disk_usage("/")
+            du = shutil.disk_usage(ROOT_PATH)
             pct = du.used / du.total * 100
             m["disk"].push(pct)
             m["disk"].text = f"{pct:.0f}"
@@ -152,13 +174,13 @@ class SystemSource:
     # -- footer ----------------------------------------------------------
 
     def footer(self) -> list[tuple[str, str]]:
-        du = shutil.disk_usage("/")
+        du = shutil.disk_usage(ROOT_PATH)
         uptime = time.time() - psutil.boot_time()
         days, rem = divmod(int(uptime), 86400)
         hours, minutes = divmod(rem // 60, 60)
         up = f"{days}d {hours}h" if days else f"{hours}h {minutes}m"
         return [
             ("HOST", self.hostname),
-            ("ROOT", f"{du.free / 1e9:.0f} GB free"),
+            ("DISK", f"{du.free / 1e9:.0f} GB free"),
             ("UPTIME", up),
         ]

@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
+
+LINUX = sys.platform.startswith("linux")
 
 SESSION_DIR = Path.home() / ".claude" / "sessions"
 
@@ -37,9 +40,15 @@ STATUS_TEXT = {
 def _proc_start(pid: int) -> str | None:
     """Process start time in clock ticks (field 22 of /proc/<pid>/stat).
 
+    Linux only, and that is deliberate: this is the exact value Claude Code
+    stores in `procStart`, so the two can be compared byte for byte. Returns
+    None where /proc does not exist.
+
     The process name in field 2 may contain spaces and parentheses, so the
     split happens after the last closing parenthesis.
     """
+    if not LINUX:
+        return None
     try:
         raw = Path(f"/proc/{pid}/stat").read_text()
     except (OSError, ValueError):
@@ -49,6 +58,27 @@ def _proc_start(pid: int) -> str | None:
         return fields[19]  # field 22 overall, counting past comm and state
     except (ValueError, IndexError):
         return None
+
+
+def _is_live(pid: int, expected_start: object) -> bool:
+    """Is this session's process still the one that wrote the file?
+
+    On Linux `procStart` is compared exactly - that rules out a recycled PID
+    being mistaken for a live session.
+
+    Elsewhere the stored value is in an unknown format, so it is ignored and
+    the check falls back to: the process exists and still looks like Claude.
+    That is weaker against PID reuse, but it never hides a running session,
+    which is the failure that would actually matter here.
+    """
+    if LINUX and expected_start is not None:
+        return str(expected_start) == str(_proc_start(pid))
+    try:
+        proc = psutil.Process(pid)
+        name = (proc.name() or "").lower()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
+    return "claude" in name or "node" in name or "python" in name
 
 
 # Memory figures move slowly; re-walking every child process once a second
@@ -175,8 +205,7 @@ def list_sessions(directory: Path | None = None) -> list[Session]:
         pid = data.get("pid")
         if not isinstance(pid, int):
             continue
-        expected = data.get("procStart")
-        if expected is not None and str(expected) != str(_proc_start(pid)):
+        if not _is_live(pid, data.get("procStart")):
             continue  # process is gone, or the PID was reassigned
         stamp = data.get("statusUpdatedAt") or data.get("updatedAt") or 0
         out.append(Session(

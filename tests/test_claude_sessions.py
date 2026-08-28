@@ -159,3 +159,38 @@ class TestMemory:
     def test_summary_omits_memory_when_unknown(self):
         sessions = [Session(1, "a", "/x", "idle", "i")]
         assert "GB" not in summarize(sessions) and "MB" not in summarize(sessions)
+
+
+class TestPlatformPortability:
+    """The panel protocol is portable; only these probes are Linux-specific."""
+
+    def test_proc_start_returns_none_off_linux(self, monkeypatch):
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        assert cs._proc_start(os.getpid()) is None
+
+    def test_liveness_falls_back_to_psutil_off_linux(self, monkeypatch):
+        """Without /proc the stored procStart is in an unknown format.
+
+        It must be ignored rather than compared, otherwise every session would
+        look dead on Windows.
+        """
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        assert cs._is_live(os.getpid(), "some-windows-format")
+        assert not cs._is_live(9_999_996, "some-windows-format")
+
+    def test_session_listing_works_off_linux(self, tmp_path, monkeypatch):
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        write_session(tmp_path, os.getpid(), procStart="131234567890000000")
+        sessions = cs.list_sessions(tmp_path)
+        assert len(sessions) == 1, "a live session must not vanish off Linux"
+
+    def test_recycled_pid_detection_is_linux_only(self, tmp_path, monkeypatch):
+        """The exact procStart check is the stronger guarantee - keep it where
+        it is available."""
+        from display_panel import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", True)
+        write_session(tmp_path, os.getpid(), procStart="999999999")
+        assert cs.list_sessions(tmp_path) == []

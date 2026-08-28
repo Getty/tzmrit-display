@@ -59,6 +59,32 @@ sudo cp systemd/99-hongtai-panel.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
+## Windows
+
+The protocol is just a serial port and JPEG frames, so nothing about it is
+Linux specific — and the platform specific probes (load average, temperature
+sensors, `/proc`) have been made portable. Installation is the same, minus the
+`dialout` group:
+
+```powershell
+git clone https://github.com/Getty/tzmrit-display.git
+cd tzmrit-display
+python -m venv .venv
+.venv\Scripts\pip install -e .
+.venv\Scripts\display-panel info
+```
+
+Windows binds the panel with its built-in `usbser.sys`, so no driver install
+should be needed. Close the vendor application first — it holds the port
+exclusively. For autostart use Task Scheduler instead of systemd.
+
+> **Status: untested on real hardware.** The code paths exist and are covered
+> by tests against a simulated Windows environment, but nobody has run it on
+> an actual Windows machine yet. Without temperature and load average the
+> layout shows five columns instead of six. See
+> [docs/windows.md](docs/windows.md) for the verification checklist — and
+> please open an issue with what you find.
+
 ## Usage
 
 ```bash

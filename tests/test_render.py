@@ -139,3 +139,31 @@ class TestSplitLayout:
         # columns times four rows.
         room = (T.FOOTER_Y - 22) - (T.TILE_TOP + 40)
         assert (room // 54) * 2 >= 8
+
+
+class TestPlatformMetrics:
+    """Metric selection must survive platforms without load average or sensors."""
+
+    def test_metric_set_adapts_without_loadavg(self, monkeypatch):
+        import display_panel.sources as sources
+        monkeypatch.setattr(sources, "HAS_LOADAVG", False)
+        monkeypatch.setattr(sources, "_cpu_temperature", lambda: None)
+        src = sources.SystemSource()
+        assert "load" not in src.metrics, "load average does not exist on Windows"
+        assert "temp" not in src.metrics
+        assert "disk" in src.metrics, "the freed slot must be filled"
+
+    def test_layout_renders_with_the_windows_metric_set(self, monkeypatch):
+        import display_panel.sources as sources
+        monkeypatch.setattr(sources, "HAS_LOADAVG", False)
+        monkeypatch.setattr(sources, "_cpu_temperature", lambda: None)
+        src = sources.SystemSource()
+        src.sample()
+        img = DashboardRenderer(scale=1).render(src.metrics, src.footer())
+        assert img.size == (T.WIDTH, T.HEIGHT)
+
+    def test_split_selection_prefers_disk_over_second_net_rate(self):
+        from display_panel.cli import SPLIT_METRICS
+        available = ["cpu", "ram", "net_up", "net_down", "disk"]
+        chosen = [k for k in SPLIT_METRICS if k in available][:4]
+        assert chosen == ["cpu", "ram", "disk", "net_down"]
