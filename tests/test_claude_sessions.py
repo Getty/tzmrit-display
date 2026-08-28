@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from display_panel.claude_sessions import (
+from tzmrit_display.claude_sessions import (
     Session,
     _fmt_age,
     _proc_start,
@@ -136,17 +136,17 @@ class TestFormatting:
 
 class TestMemory:
     def test_own_process_reports_memory(self):
-        from display_panel.claude_sessions import process_memory
+        from tzmrit_display.claude_sessions import process_memory
         total, children = process_memory(os.getpid(), ttl=0)
         assert total > 0
         assert children >= 0
 
     def test_dead_process_reports_zero(self):
-        from display_panel.claude_sessions import process_memory
+        from tzmrit_display.claude_sessions import process_memory
         assert process_memory(9_999_997, ttl=0) == (0, 0)
 
     def test_cache_avoids_repeated_walks(self):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         cs._mem_cache.clear()
         first = cs.process_memory(os.getpid())
         cs._mem_cache[os.getpid()] = (cs.time.monotonic(), 12345, 7)
@@ -158,7 +158,7 @@ class TestMemory:
         (1024**3, "1.0 GB"), (int(1.75 * 1024**3), "1.8 GB"),
     ])
     def test_memory_format(self, value, expected):
-        from display_panel.claude_sessions import fmt_memory
+        from tzmrit_display.claude_sessions import fmt_memory
         assert fmt_memory(value) == expected
 
     def test_summary_includes_total_memory(self):
@@ -177,14 +177,14 @@ class TestPlatformPortability:
     """The panel protocol is portable; only these probes are Linux-specific."""
 
     def test_proc_start_returns_none_off_linux(self, monkeypatch):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         assert cs._proc_start(os.getpid()) is None
 
     def test_liveness_falls_back_to_psutil_when_unparseable(self, monkeypatch):
         """A procStart in an unknown format must be ignored rather than
         compared, otherwise every session would look dead."""
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         assert cs._is_live(os.getpid(), "some-unknown-format")
         assert not cs._is_live(9_999_996, "some-unknown-format")
@@ -192,7 +192,7 @@ class TestPlatformPortability:
     def test_session_listing_works_without_platform_probe(self, tmp_path, monkeypatch):
         """On a platform with neither /proc nor the ticks check (say macOS)
         the value is ignored entirely."""
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         monkeypatch.setattr(cs, "WINDOWS", False)
         write_session(tmp_path, os.getpid(), procStart="131234567890000000")
@@ -200,7 +200,7 @@ class TestPlatformPortability:
         assert len(sessions) == 1, "a live session must not vanish off Linux"
 
     def test_recycled_pid_detection_on_linux(self, tmp_path, monkeypatch):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", True)
         write_session(tmp_path, os.getpid(), procStart="999999999")
         assert cs.list_sessions(tmp_path) == []
@@ -214,7 +214,7 @@ class TestWindowsTicks:
     """
 
     def test_matching_ticks_keep_the_session(self, tmp_path, monkeypatch):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         monkeypatch.setattr(cs, "WINDOWS", True)
         local_ticks = cs._windows_start_ticks(os.getpid())[0]
@@ -222,7 +222,7 @@ class TestWindowsTicks:
         assert len(cs.list_sessions(tmp_path)) == 1
 
     def test_utc_reading_is_accepted_too(self, monkeypatch):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         monkeypatch.setattr(cs, "WINDOWS", True)
         utc_ticks = cs._windows_start_ticks(os.getpid())[1]
@@ -230,14 +230,14 @@ class TestWindowsTicks:
 
     def test_recycled_pid_is_dropped(self, tmp_path, monkeypatch):
         """A parseable but wrong tick count means: different process."""
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         monkeypatch.setattr(cs, "WINDOWS", True)
         write_session(tmp_path, os.getpid(), procStart="131234567890000000")
         assert cs.list_sessions(tmp_path) == []
 
     def test_dead_process_is_dropped(self, monkeypatch):
-        from display_panel import claude_sessions as cs
+        from tzmrit_display import claude_sessions as cs
         monkeypatch.setattr(cs, "LINUX", False)
         monkeypatch.setattr(cs, "WINDOWS", True)
         assert not cs._is_live(9_999_995, "639235445713023500")

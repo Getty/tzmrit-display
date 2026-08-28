@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo.
-echo  display-panel installer
+echo  tzmrit-display installer
 echo  =======================
 echo.
 
@@ -22,7 +22,7 @@ if not defined PY (
 )
 
 rem -- stop a running instance so files are not locked -----------------------
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | Where-Object { $_.CommandLine -match 'display_panel' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | Where-Object { $_.CommandLine -match 'tzmrit_display' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
 
 rem -- virtualenv + package --------------------------------------------------
 if not exist ".venv\Scripts\python.exe" (
@@ -34,7 +34,7 @@ echo Installing package...
 
 rem -- is the panel there? ---------------------------------------------------
 echo.
-".venv\Scripts\display-panel.exe" info
+".venv\Scripts\tzmrit-display.exe" info
 if errorlevel 1 (
     echo.
     echo WARNING: no panel answered. Is it plugged in? Is the vendor
@@ -45,11 +45,11 @@ if errorlevel 1 (
 rem -- with or without the Claude sessions view ------------------------------
 echo.
 choice /C YN /T 30 /D Y /M "Show running Claude Code sessions next to the metrics"
-set "MODEARGS=-m display_panel run"
-if %errorlevel%==1 set "MODEARGS=-m display_panel run --claude"
+set "MODEARGS=-m tzmrit_display run"
+if %errorlevel%==1 set "MODEARGS=-m tzmrit_display run --claude"
 
 rem -- autostart shortcut in the Startup folder (no admin needed) ------------
-powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\display-panel.lnk'); $s.TargetPath='%CD%\.venv\Scripts\pythonw.exe'; $s.Arguments='%MODEARGS%'; $s.WorkingDirectory='%CD%'; $s.Save()" || exit /b 1
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\tzmrit-display.lnk'); $s.TargetPath='%CD%\.venv\Scripts\pythonw.exe'; $s.Arguments='%MODEARGS%'; $s.WorkingDirectory='%CD%'; $s.Save()" || exit /b 1
 
 rem -- and start it right now ------------------------------------------------
 start "" "%CD%\.venv\Scripts\pythonw.exe" %MODEARGS%

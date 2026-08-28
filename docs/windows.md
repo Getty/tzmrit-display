@@ -14,7 +14,7 @@ and pyserial reports the same `vid`/`pid`/`manufacturer` fields on Windows
 
 Three ways, pick one:
 
-1. **The installer.** `display-panel-setup-<version>.exe` — no Python, no git
+1. **The installer.** `tzmrit-display-setup-<version>.exe` — no Python, no git
    required. Installs per-user (no admin prompt), registers an uninstaller in
    *Apps & Features*, and offers autostart at logon with or without the Claude
    sessions view. Build it yourself with `packaging\build.bat` (needs Python
@@ -30,7 +30,7 @@ Three ways, pick one:
    ```powershell
    python -m venv .venv
    .venv\Scripts\pip install -e .
-   .venv\Scripts\display-panel info
+   .venv\Scripts\tzmrit-display info
    ```
 
    The install must be editable (`-e`): the fonts are resolved relative to the
@@ -68,12 +68,12 @@ integer falls back to the weak check (process exists and looks like Claude).
 
 ## Verified on first run
 
-* `display-panel info` prints model, geometry, firmware over `COM3`.
+* `tzmrit-display info` prints model, geometry, firmware over `COM3`.
 * Rendering and fonts work; the metric set degrades to five tiles as designed.
 * `--claude` finds running sessions in `%USERPROFILE%\.claude\sessions\`,
   including status and memory (child processes — MCP servers — included).
 * Continuous `run`: 1.01 fps sustained, ~70 KB per frame.
-* The PyInstaller build (`packaging\display-panel.spec`) finds the fonts
+* The PyInstaller build (`packaging\tzmrit-display.spec`) finds the fonts
   because the frozen layout mirrors the checkout layout (`_internal\fonts`).
 
 Worth one look on a new panel model: the image orientation. The rotation is
@@ -87,6 +87,6 @@ on Linux — but angle=90 hardware has never been seen.
   logon is for.
 * Sleep and hibernate are untested. The device may need to be re-enumerated
   after resume; the process may need a restart then.
-* A frozen `display-panelw.exe` has no console: errors are invisible. If the
-  panel stays dark, run `display-panel.exe run -v` (the console twin) once to
+* A frozen `tzmrit-displayw.exe` has no console: errors are invisible. If the
+  panel stays dark, run `tzmrit-display.exe run -v` (the console twin) once to
   see why.

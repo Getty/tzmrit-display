@@ -67,7 +67,7 @@ sensors, `/proc`) have been made portable. Windows binds the panel with its
 built-in `usbser.sys`, so no driver install is needed. Close the vendor
 application first — it holds the port exclusively.
 
-The easiest path is the installer, `display-panel-setup-<version>.exe`: no
+The easiest path is the installer, `tzmrit-display-setup-<version>.exe`: no
 Python required, per-user install, uninstaller in *Apps & Features*, optional
 autostart at logon. Build it with `packaging\build.bat` (needs NSIS).
 
@@ -93,13 +93,13 @@ Details and verified-hardware notes: [docs/windows.md](docs/windows.md).
 ## Usage
 
 ```bash
-display-panel run --claude       # system metrics + Claude sessions
-display-panel run                # metrics only, six columns instead of four
-display-panel info               # what the device says about itself
-display-panel preview -o out.png # render the layout without using the panel
-display-panel image picture.png  # show any image
-display-panel brightness 60      # 0–100
-display-panel clear              # clear the panel
+tzmrit-display run --claude       # system metrics + Claude sessions
+tzmrit-display run                # metrics only, six columns instead of four
+tzmrit-display info               # what the device says about itself
+tzmrit-display preview -o out.png # render the layout without using the panel
+tzmrit-display image picture.png  # show any image
+tzmrit-display brightness 60      # 0–100
+tzmrit-display clear              # clear the panel
 ```
 
 `preview` is the fast path for layout work: it needs no hardware and does not
@@ -113,13 +113,13 @@ program running, the screen goes black. Hence a service:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/display-panel.service ~/.config/systemd/user/
+cp systemd/tzmrit-display.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now display-panel
+systemctl --user enable --now tzmrit-display
 ```
 
 While the service runs it owns the port — stop it before running commands by hand:
-`systemctl --user stop display-panel`.
+`systemctl --user stop tzmrit-display`.
 
 ### If the service says `Permission denied` but it works interactively
 
@@ -136,7 +136,7 @@ If the GID for `dialout` (usually 20) is missing there, **log out and back in on
 Until then, start it directly:
 
 ```bash
-setsid nohup ./.venv/bin/python -m display_panel run --claude </dev/null >/tmp/panel.log 2>&1 &
+setsid nohup ./.venv/bin/python -m tzmrit_display run --claude </dev/null >/tmp/panel.log 2>&1 &
 ```
 
 ## What `--claude` shows — and what it does not
@@ -180,13 +180,13 @@ Green is deliberately absent: a dashboard where everything glows green in normal
 operation burns attention on information that never changes. Quiet is the
 default state.
 
-Thresholds live in `display_panel/sources.py`, colors and metrics in
-`display_panel/theme.py`.
+Thresholds live in `tzmrit_display/sources.py`, colors and metrics in
+`tzmrit_display/theme.py`.
 
 ## Layout
 
 ```
-display_panel/
+tzmrit_display/
   panel.py            wire protocol: frames, keepalive, rotation, JPEG
   render.py           layout engine for 1920 × 462
   sources.py          system metrics with history

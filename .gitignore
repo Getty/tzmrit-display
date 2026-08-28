@@ -31,7 +31,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# Preview images from `display-panel preview`
+# Preview images from `tzmrit-display preview`
 preview*.png
 
 # Installer build output (packaging\build.bat)

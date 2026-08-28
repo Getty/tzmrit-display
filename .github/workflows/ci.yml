@@ -50,12 +50,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: display-panel-setup
-          path: packaging/display-panel-setup-*.exe
+          name: tzmrit-display-setup
+          path: packaging/tzmrit-display-setup-*.exe
           if-no-files-found: error
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: packaging/display-panel-setup-*.exe
+          files: packaging/tzmrit-display-setup-*.exe

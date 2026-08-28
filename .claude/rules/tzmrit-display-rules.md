@@ -1,4 +1,4 @@
-# display-panel House Rules
+# tzmrit-display House Rules
 
 Apply to every task in this repository unless explicitly overridden. Bias: caution
 over speed on non-trivial work; use judgment on trivial tasks. Loaded automatically
@@ -14,7 +14,7 @@ skills force-loaded via `briefing.skills` — this file is for the orchestrating
 3. **Surgical changes** — Touch only what you must. Don't "improve" adjacent code,
    comments, or formatting. Match existing style.
 4. **Read before you write** — Before new code, read the module docstring, exports
-   and immediate callers. The docstrings in `display_panel/*.py` carry the *why*;
+   and immediate callers. The docstrings in `tzmrit_display/*.py` carry the *why*;
    "looks orthogonal" is dangerous around the wire protocol and the render pipeline.
 5. **Surface conflicts, don't average them** — Contradicting patterns: pick one,
    explain why, flag the other. Don't blend.
@@ -32,27 +32,27 @@ skills force-loaded via `briefing.skills` — this file is for the orchestrating
 This rule depends on whether the Agent/Task tool is available to you.
 
 - **You can spawn subagents** (orchestrating main agent): Do NOT touch
-  behavior-relevant code yourself — delegate to `display-panel-worker`. Your lane:
+  behavior-relevant code yourself — delegate to `tzmrit-display-worker`. Your lane:
   coordinate, inspect, plan, review diffs, run tests, manage git, edit non-behavioral
-  docs. When in doubt, delegate. Why: only the `display-panel-*` agents get their
+  docs. When in doubt, delegate. Why: only the `tzmrit-display-*` agents get their
   skills force-loaded via `briefing.skills`; you get no briefing and would touch the
   wire protocol / render engine with too little context.
 
   | Task | Agent |
   |---|---|
-  | Implement / refactor / debug / test code | `display-panel-worker` (default) |
-  | Cross-cutting pre-release audit (version, deps, changes) | `display-panel-release-checker` |
-  | Linux release chain (build, systemd, udev) | `display-panel-release-linux` |
-  | Windows release chain (PyInstaller, NSIS, `.bat`) | `display-panel-release-windows` |
+  | Implement / refactor / debug / test code | `tzmrit-display-worker` (default) |
+  | Cross-cutting pre-release audit (version, deps, changes) | `tzmrit-display-release-checker` |
+  | Linux release chain (build, systemd, udev) | `tzmrit-display-release-linux` |
+  | Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
 
   The three release auditors are read-only and report; they never edit, tag or
   release — the worker fixes what they find. Run the two platform auditors in
   parallel for a full pre-release check.
 
-- **You cannot spawn subagents** (you ARE a `display-panel-*` agent): The delegation
+- **You cannot spawn subagents** (you ARE a `tzmrit-display-*` agent): The delegation
   lock does not apply to you — implement, refactor, debug, and test per these rules.
 
-Behavior-relevant = anything under `display_panel/` and `tests/`: the wire protocol,
+Behavior-relevant = anything under `tzmrit_display/` and `tests/`: the wire protocol,
 the render pipeline, metric sources, session detection, the CLI, error handling,
 performance. Pure prose docs (`README.md`, `docs/*.md`) and changelog notes are not.
 
@@ -100,5 +100,6 @@ output to make a test pass unless a new real-hardware capture backs it.
 ## Python & architecture specifics — reference, don't restate
 
 Architecture, hardware invariants, rendering rules, portability and repo conventions
-live in skill `display-panel-core` (force-loaded for `display-panel-*` agents). Do not
-duplicate that content here.
+live in skill `tzmrit-display-core` (force-loaded for `tzmrit-display-*` agents). The
+two release pipelines live in skill `tzmrit-display-packaging`. Do not duplicate that
+content here.

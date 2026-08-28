@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Builds two executables from one analysis:
 #
-#   display-panel.exe    console  - the CLI (info, run, preview, ...)
-#   display-panelw.exe   windowed - same CLI, no console window; this is what
+#   tzmrit-display.exe    console  - the CLI (info, run, preview, ...)
+#   tzmrit-displayw.exe   windowed - same CLI, no console window; this is what
 #                                   the autostart shortcut runs
 #
 # The fonts land in _internal/fonts because theme.py resolves them relative
@@ -25,7 +25,7 @@ exe_cli = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="display-panel",
+    name="tzmrit-display",
     console=True,
 )
 
@@ -34,7 +34,7 @@ exe_win = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="display-panelw",
+    name="tzmrit-displayw",
     console=False,
 )
 
@@ -43,5 +43,5 @@ coll = COLLECT(
     exe_win,
     a.binaries,
     a.datas,
-    name="display-panel",
+    name="tzmrit-display",
 )

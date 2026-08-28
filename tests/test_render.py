@@ -3,10 +3,10 @@
 import math
 import time
 
-from display_panel import theme as T
-from display_panel.claude_sessions import Session
-from display_panel.render import DashboardRenderer, _spark_points
-from display_panel.sources import Metric
+from tzmrit_display import theme as T
+from tzmrit_display.claude_sessions import Session
+from tzmrit_display.render import DashboardRenderer, _spark_points
+from tzmrit_display.sources import Metric
 
 
 class TestMetricStatus:
@@ -145,7 +145,7 @@ class TestPlatformMetrics:
     """Metric selection must survive platforms without load average or sensors."""
 
     def test_metric_set_adapts_without_loadavg(self, monkeypatch):
-        import display_panel.sources as sources
+        import tzmrit_display.sources as sources
         monkeypatch.setattr(sources, "HAS_LOADAVG", False)
         monkeypatch.setattr(sources, "_cpu_temperature", lambda: None)
         src = sources.SystemSource()
@@ -154,7 +154,7 @@ class TestPlatformMetrics:
         assert "disk" in src.metrics, "the freed slot must be filled"
 
     def test_layout_renders_with_the_windows_metric_set(self, monkeypatch):
-        import display_panel.sources as sources
+        import tzmrit_display.sources as sources
         monkeypatch.setattr(sources, "HAS_LOADAVG", False)
         monkeypatch.setattr(sources, "_cpu_temperature", lambda: None)
         src = sources.SystemSource()
@@ -163,7 +163,7 @@ class TestPlatformMetrics:
         assert img.size == (T.WIDTH, T.HEIGHT)
 
     def test_split_selection_prefers_disk_over_second_net_rate(self):
-        from display_panel.cli import SPLIT_METRICS
+        from tzmrit_display.cli import SPLIT_METRICS
         available = ["cpu", "ram", "net_up", "net_down", "disk"]
         chosen = [k for k in SPLIT_METRICS if k in available][:4]
         assert chosen == ["cpu", "ram", "disk", "net_down"]

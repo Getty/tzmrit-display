@@ -1,8 +1,8 @@
-"""PyInstaller entry point - same as the `display-panel` console script."""
+"""PyInstaller entry point - same as the `tzmrit-display` console script."""
 
 import sys
 
-from display_panel.cli import main
+from tzmrit_display.cli import main
 
 if __name__ == "__main__":
     sys.exit(main())

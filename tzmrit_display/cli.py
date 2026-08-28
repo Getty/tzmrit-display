@@ -15,7 +15,7 @@ from .panel import Panel, PanelError, find_port
 from .render import DashboardRenderer
 from .sources import SystemSource
 
-log = logging.getLogger("display_panel")
+log = logging.getLogger("tzmrit_display")
 
 # The split layout has room for four metrics. This is a preference order, not
 # a fixed set: temperature and load average are unavailable on Windows, so
@@ -142,7 +142,7 @@ def cmd_run(args) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="display-panel", description="Drive a HONGTAI USB LCD")
+    ap = argparse.ArgumentParser(prog="tzmrit-display", description="Drive a HONGTAI USB LCD")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

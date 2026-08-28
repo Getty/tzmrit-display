@@ -1,15 +1,15 @@
 ---
-name: display-panel-core
-description: Architecture, invariants and repo conventions for display-panel — the Linux/Windows driver and system monitor for HONGTAI USB LCD panels (33c3:7791/7792). Use when implementing, refactoring, debugging or testing any module under display_panel/.
+name: tzmrit-display-core
+description: Architecture, invariants and repo conventions for tzmrit-display — the Linux/Windows driver and system monitor for HONGTAI USB LCD panels (33c3:7791/7792). Use when implementing, refactoring, debugging or testing any module under tzmrit_display/.
 ---
 
-# display-panel — core
+# tzmrit-display — core
 
-A single Python package (`display_panel`) that drives HONGTAI USB CDC-ACM LCD
+A single Python package (`tzmrit_display`) that drives HONGTAI USB CDC-ACM LCD
 panels and paints a system monitor onto them. There is no kernel driver: the
 panel enumerates as `/dev/ttyACM*` on its own (Linux) or a COM port (Windows),
 and this code is the "driver software" — it opens the port and pushes JPEG
-frames. Console script: `display-panel` (`display_panel.cli:main`). Python
+frames. Console script: `tzmrit-display` (`tzmrit_display.cli:main`). Python
 ≥3.10; deps `pyserial`, `pillow`, `psutil`.
 
 ## The pipeline
@@ -24,8 +24,8 @@ theme (T) ────────────┘                               
 ```
 
 - `cli.py` — argparse subcommands: `run` (live loop), `preview` (write PNG),
-  `image FILE` (push a still), `brightness LEVEL`. `run`/`preview` take
-  `--claude` for the split layout. The live loop pushes a frame every
+  `image FILE` (push a still), `clear`, `brightness LEVEL`, `info`. `run`/`preview`
+  take `--claude` for the split layout. The live loop pushes a frame every
   `--interval` seconds and must keep sending keepalives.
 - `sources.py` — `SystemSource` samples CPU/RAM/temp/load/disk/net into
   `Metric` objects, each holding a bounded `deque` history (`HISTORY = 90`) for

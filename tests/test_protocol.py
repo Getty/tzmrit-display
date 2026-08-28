@@ -6,7 +6,7 @@ D215-NOR-FL7707N-9.16inch-hor (firmware 3.2), not from a specification.
 
 import pytest
 
-from display_panel.panel import (
+from tzmrit_display.panel import (
     PanelError,
     PanelInfo,
     checksum,

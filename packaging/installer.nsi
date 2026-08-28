@@ -1,13 +1,13 @@
-; NSIS installer for display-panel.
+; NSIS installer for tzmrit-display.
 ; Per-user install (no admin), uninstaller registered in Apps & Features.
 ; Build with packaging\build.bat - expects PyInstaller output in
-; packaging\dist\display-panel\.
+; packaging\dist\tzmrit-display\.
 
 !include "MUI2.nsh"
 !include "Sections.nsh"
 !include "FileFunc.nsh"
 
-!define APPNAME "display-panel"
+!define APPNAME "tzmrit-display"
 !ifndef VERSION
   !error "VERSION is not defined. Build with packaging\build.bat - it passes /DVERSION from pyproject.toml, the single source of the version."
 !endif
@@ -16,7 +16,7 @@
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
 Name "${APPNAME} ${VERSION}"
-OutFile "display-panel-setup-${VERSION}.exe"
+OutFile "tzmrit-display-setup-${VERSION}.exe"
 Unicode True
 RequestExecutionLevel user
 InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
@@ -43,18 +43,18 @@ Var AutostartArgs
 Section "${APPNAME} (required)" SecCore
   SectionIn RO
   ; stop a running instance so files can be replaced
-  nsExec::Exec 'taskkill /f /im display-panelw.exe'
-  nsExec::Exec 'taskkill /f /im display-panel.exe'
+  nsExec::Exec 'taskkill /f /im tzmrit-displayw.exe'
+  nsExec::Exec 'taskkill /f /im tzmrit-display.exe'
   Sleep 500
 
   SetOutPath "$INSTDIR"
-  File /r "dist\display-panel\*.*"
+  File /r "dist\tzmrit-display\*.*"
 
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Dashboard.lnk" \
-                 "$INSTDIR\display-panelw.exe" "run"
+                 "$INSTDIR\tzmrit-displayw.exe" "run"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Dashboard with Claude sessions.lnk" \
-                 "$INSTDIR\display-panelw.exe" "run --claude"
+                 "$INSTDIR\tzmrit-displayw.exe" "run --claude"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
   ; the autostart sections below recreate this if selected
@@ -67,7 +67,7 @@ Section "${APPNAME} (required)" SecCore
   WriteRegStr HKCU "${UNINST_KEY}" "URLInfoAbout" "${URL}"
   WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\display-panel.exe"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\tzmrit-display.exe"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -78,11 +78,11 @@ SectionEnd
 SectionGroup /e "Start at logon" SecGroupAuto
   Section /o "System dashboard" SecAutoPlain
     StrCpy $AutostartArgs "run"
-    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\display-panelw.exe" "run"
+    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run"
   SectionEnd
   Section "Dashboard with Claude sessions" SecAutoClaude
     StrCpy $AutostartArgs "run --claude"
-    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\display-panelw.exe" "run --claude"
+    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run --claude"
   SectionEnd
   Section /o "No autostart" SecAutoNone
   SectionEnd
@@ -103,17 +103,17 @@ Function .onSelChange
 FunctionEnd
 
 Function LaunchDashboard
-  Exec '"$INSTDIR\display-panelw.exe" $AutostartArgs'
+  Exec '"$INSTDIR\tzmrit-displayw.exe" $AutostartArgs'
 FunctionEnd
 
 ; -- uninstall ---------------------------------------------------------------
 
 Section "Uninstall"
-  nsExec::Exec 'taskkill /f /im display-panelw.exe'
-  nsExec::Exec 'taskkill /f /im display-panel.exe'
+  nsExec::Exec 'taskkill /f /im tzmrit-displayw.exe'
+  nsExec::Exec 'taskkill /f /im tzmrit-display.exe'
   Sleep 500
   ; blank the panel so no stale image stays behind (best effort)
-  nsExec::Exec '"$INSTDIR\display-panel.exe" clear'
+  nsExec::Exec '"$INSTDIR\tzmrit-display.exe" clear'
 
   Delete "$SMSTARTUP\${APPNAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APPNAME}"

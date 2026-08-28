@@ -1,5 +1,5 @@
 [project]
-name = "display-panel"
+name = "tzmrit-display"
 dynamic = ["version"]
 description = "Linux system monitor for HONGTAI USB LCD panels (33c3:7791/7792)"
 readme = "README.md"
@@ -14,7 +14,7 @@ Homepage = "https://github.com/Getty/tzmrit-display"
 Issues = "https://github.com/Getty/tzmrit-display/issues"
 
 [project.scripts]
-display-panel = "display_panel.cli:main"
+tzmrit-display = "tzmrit_display.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
@@ -24,7 +24,7 @@ requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["display_panel"]
+packages = ["tzmrit_display"]
 
 # The version has no home in the repo - it is derived from the git tag
 # (v0.2.0 -> 0.2.0; between releases: 0.2.1.dev3+g<hash>). Releasing is

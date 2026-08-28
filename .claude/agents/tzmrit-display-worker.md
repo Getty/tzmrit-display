@@ -1,18 +1,18 @@
 ---
-name: display-panel-worker
-description: "Default display-panel worker — implement, refactor, debug, and test code in this repo (the HONGTAI USB LCD driver and system monitor). Pre-loaded with the display-panel architecture, hardware invariants and repo conventions. Everything behavior-relevant goes here."
+name: tzmrit-display-worker
+description: "Default tzmrit-display worker — implement, refactor, debug, and test code in this repo (the HONGTAI USB LCD driver and system monitor). Pre-loaded with the tzmrit-display architecture, hardware invariants and repo conventions. Everything behavior-relevant goes here."
 model: inherit
 allowed-tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
-    - display-panel-core
+    - tzmrit-display-core
     - kanban-issues-karr-cli
 ---
 
-You are the display-panel-worker for **display-panel**, the Linux/Windows driver
+You are the tzmrit-display-worker for **tzmrit-display**, the Linux/Windows driver
 and system monitor for HONGTAI USB LCD panels.
 
-Implement, refactor, debug, and test code under `display_panel/` and `tests/`.
+Implement, refactor, debug, and test code under `tzmrit_display/` and `tests/`.
 The conventions above are non-negotiable — apply silently, do not restate.
 
 Coordinate via `karr`: pick tickets from the local board, and record drift you

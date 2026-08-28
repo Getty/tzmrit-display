@@ -1,30 +1,30 @@
-# display-panel
+# tzmrit-display
 
 Linux/Windows driver and system monitor for HONGTAI USB LCD panels
 (`33c3:7791`/`7792`). No kernel driver — the panel enumerates as USB CDC-ACM
 (`/dev/ttyACM*`) and this Python package pushes JPEG frames at it. Console
-script: `display-panel`.
+script: `tzmrit-display`.
 
 ## Delegation
 
 Delegate behavior-relevant code to the right agent instead of touching it
 yourself — the principle, the lane and the hardware hazards are in
-`.claude/rules/display-panel-rules.md` (auto-loaded every turn).
+`.claude/rules/tzmrit-display-rules.md` (auto-loaded every turn).
 
 | Task | Agent |
 |---|---|
-| Implement / refactor / debug / test code under `display_panel/` or `tests/` | `display-panel-worker` (default) |
-| Cross-cutting release audit (version, deps, changes) | `display-panel-release-checker` |
-| Linux release chain (sdist/wheel, systemd, udev) | `display-panel-release-linux` |
-| Windows release chain (PyInstaller, NSIS, `.bat`) | `display-panel-release-windows` |
+| Implement / refactor / debug / test code under `tzmrit_display/` or `tests/` | `tzmrit-display-worker` (default) |
+| Cross-cutting release audit (version, deps, changes) | `tzmrit-display-release-checker` |
+| Linux release chain (sdist/wheel, systemd, udev) | `tzmrit-display-release-linux` |
+| Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
 
 The three release auditors are read-only and report; the worker fixes what they
 find. Run the two platform auditors in parallel for a full pre-release check.
 
 The agents carry their knowledge via `briefing.skills` (see `.claude/agents/`);
 the main agent delegates rather than loading those skills. Architecture, hardware
-invariants and repo conventions live in skill `display-panel-core`; the two release
-pipelines in `display-panel-packaging`; the karr command surface in
+invariants and repo conventions live in skill `tzmrit-display-core`; the two release
+pipelines in `tzmrit-display-packaging`; the karr command surface in
 `kanban-issues-karr-cli` (all under `.claude/skills/`).
 
 ## Verify
