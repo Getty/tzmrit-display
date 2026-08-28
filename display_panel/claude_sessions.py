@@ -92,8 +92,8 @@ def _is_live(pid: int, expected_start: object) -> bool:
     session.
 
     Elsewhere (or when the value does not parse) the stored value is ignored
-    and the check falls back to: the process exists and still looks like
-    Claude. That is weaker against PID reuse, but it never hides a running
+    and the check falls back to existence: a live process is live, a dead pid
+    is not. That is weaker against PID reuse, but it never hides a running
     session, which is the failure that would actually matter here.
     """
     if LINUX and expected_start is not None:
@@ -110,10 +110,9 @@ def _is_live(pid: int, expected_start: object) -> bool:
             return any(abs(expected - t) <= 2 * _TICKS_PER_SECOND for t in ticks)
     try:
         proc = psutil.Process(pid)
-        name = (proc.name() or "").lower()
+        return proc.status() != psutil.STATUS_ZOMBIE
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
-    return "claude" in name or "node" in name or "python" in name
 
 
 # Memory figures move slowly; re-walking every child process once a second
