@@ -1,0 +1,18 @@
+[Unit]
+Description=HONGTAI USB LCD system monitor
+Documentation=https://github.com/Getty/tzmrit-display
+After=graphical-session.target
+
+# %h is the home directory. If the project lives elsewhere, adjust both paths.
+[Service]
+Type=simple
+ExecStart=%h/dev/display/.venv/bin/python -m display_panel run --claude --interval 1.0 --brightness 100
+WorkingDirectory=%h/dev/display
+Restart=on-failure
+RestartSec=5
+# The panel hangs off a USB port that may not exist yet at boot, so restart
+# attempts keep going indefinitely.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

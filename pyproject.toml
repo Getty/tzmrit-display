@@ -1,0 +1,30 @@
+[project]
+name = "display-panel"
+version = "0.1.0"
+description = "Linux system monitor for HONGTAI USB LCD panels (33c3:7791/7792)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["usb", "lcd", "system-monitor", "hongtai", "tzmrit", "cdc-acm", "claude-code"]
+dependencies = ["pyserial>=3.5", "pillow>=10.0", "psutil>=5.9"]
+
+[project.urls]
+Homepage = "https://github.com/Getty/tzmrit-display"
+Issues = "https://github.com/Getty/tzmrit-display/issues"
+
+[project.scripts]
+display-panel = "display_panel.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["display_panel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

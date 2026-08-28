@@ -1,0 +1,5 @@
+# HONGTAI USB LCD - access without root.
+# Membership in the "dialout" group, which cdc_acm sets up, is usually enough;
+# this rule is for systems where it is not.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="33c3", ATTRS{idProduct}=="7791", MODE="0660", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="33c3", ATTRS{idProduct}=="7792", MODE="0660", GROUP="dialout", TAG+="uaccess"
