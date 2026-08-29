@@ -11,6 +11,7 @@ import time
 import serial
 from PIL import Image
 
+from . import runtime
 from .claude_sessions import list_sessions, summarize
 from .panel import Panel, PanelError, find_port
 from .render import DashboardRenderer
@@ -106,6 +107,30 @@ def cmd_brightness(args) -> int:
     return 0
 
 
+def cmd_stop(args) -> int:
+    """Ask the running dashboard to exit gracefully.
+
+    Cooperative via the runtime stop-request file - no process is killed, so
+    the panel is closed exactly as on Ctrl+C (including --blank-on-exit if
+    the running instance was started with it). Exit codes: 0 the dashboard
+    exited, 1 no dashboard was running, 2 the request was delivered but the
+    dashboard had not exited within the wait.
+    """
+    pid = runtime.read_instance()
+    if pid is None:
+        print("No dashboard running.")
+        return 1
+    runtime.request_stop(pid)
+    deadline = time.monotonic() + runtime.STOP_WAIT
+    while time.monotonic() < deadline:
+        if not runtime.pid_alive(pid):
+            print("Dashboard stopped.")
+            return 0
+        time.sleep(0.2)
+    print("Stop requested, but the dashboard has not exited yet.", file=sys.stderr)
+    return 2
+
+
 def cmd_run(args) -> int:
     """Continuous dashboard.
 
@@ -113,6 +138,12 @@ def cmd_run(args) -> int:
     loop waits for the port to (re)appear and reconnects through the normal
     cold-start sequence (connect, live mode, brightness). Metric history lives
     in `src` and is kept across reconnects.
+
+    Only one dashboard drives the panel: a second `run` asks a running
+    instance to exit and takes over, and `stop` requests the same shutdown.
+    Both go through the runtime stop-request file, which the loops below poll;
+    honoring it is identical to Ctrl+C, and the clean rc 0 keeps systemd's
+    Restart=on-failure from restarting a deliberately stopped instance.
     """
     src = SystemSource()
     renderer = DashboardRenderer(scale=args.scale)
@@ -125,57 +156,85 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
+    def stop_requested():
+        """Signal received, or a stop request addressed to this instance."""
+        nonlocal stop
+        if not stop and runtime.consume_stop_request():
+            log.info("stop requested, shutting down")
+            stop = True
+        return stop
+
     def wait(seconds):
-        """Sleep in short slices so a stop signal stays responsive."""
+        """Sleep in short slices so signals and stop requests stay responsive."""
         deadline = time.monotonic() + seconds
-        while not stop and time.monotonic() < deadline:
+        while not stop_requested() and time.monotonic() < deadline:
             time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+
+    # Take over from an already running dashboard (e.g. the other Start menu
+    # variant): ask it to exit and give it a bounded window to let go of the
+    # port. If it does not, the reconnect loop below waits it out instead of
+    # a second instance lingering silently forever.
+    runtime.clear_stale_stop_request()
+    other = runtime.read_instance()
+    if other is not None:
+        log.info("dashboard pid %d already running, asking it to hand over", other)
+        runtime.request_stop(other)
+        deadline = time.monotonic() + runtime.STOP_WAIT
+        while time.monotonic() < deadline and runtime.pid_alive(other):
+            time.sleep(0.2)
+        if runtime.pid_alive(other):
+            log.warning("pid %d has not exited; if it still holds the port, "
+                        "this instance will wait in the reconnect loop", other)
+    runtime.claim_instance()
 
     total_frames = 0
     primed = False
-    while not stop:
-        try:
-            with Panel() as p:
-                log.info("panel %s on %s, %dx%d", p.info.model, p.port_path, *p.viewport)
-                p.start_live()
-                if args.brightness is not None:
-                    p.set_brightness(args.brightness)
+    try:
+        while not stop_requested():
+            try:
+                with Panel() as p:
+                    log.info("panel %s on %s, %dx%d", p.info.model, p.port_path, *p.viewport)
+                    p.start_live()
+                    if args.brightness is not None:
+                        p.set_brightness(args.brightness)
 
-                if not primed:
-                    # Prime the history so the sparklines don't grow out of nothing
-                    for _ in range(3):
-                        src.sample()
-                        time.sleep(0.2)
-                    primed = True
+                    if not primed:
+                        # Prime the history so the sparklines don't grow out of nothing
+                        for _ in range(3):
+                            src.sample()
+                            time.sleep(0.2)
+                        primed = True
 
-                frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
-                while not stop:
-                    began = time.monotonic()
-                    size = p.show(_compose(src, renderer, args.claude))
-                    frames += 1
-                    total_frames += 1
-                    if time.monotonic() - last_log > 60:
-                        elapsed = time.monotonic() - t_start
-                        log.info("%d frames, %.2f fps, last %.0f KB", frames, frames / elapsed, size / 1024)
-                        last_log = time.monotonic()
-                    time.sleep(max(0.0, args.interval - (time.monotonic() - began)))
+                    frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
+                    while not stop_requested():
+                        began = time.monotonic()
+                        size = p.show(_compose(src, renderer, args.claude))
+                        frames += 1
+                        total_frames += 1
+                        if time.monotonic() - last_log > 60:
+                            elapsed = time.monotonic() - t_start
+                            log.info("%d frames, %.2f fps, last %.0f KB", frames, frames / elapsed, size / 1024)
+                            last_log = time.monotonic()
+                        wait(max(0.0, args.interval - (time.monotonic() - began)))
 
-                if args.blank_on_exit:
-                    p.close(blank=True)
-        except (PanelError, serial.SerialException) as exc:
-            # Panel not plugged in yet, or unplugged mid-run. The context
-            # manager already closed the port; wait for it to (re)appear.
-            if stop:
-                break
-            log.warning("panel lost: %s", exc)
-            log.info("waiting for the panel (polling every %.0f s)", RECONNECT_POLL)
-            while not stop:
-                # Sleep first: on Windows a replugged port can enumerate
-                # before it is openable, so never retry back-to-back.
-                wait(RECONNECT_POLL)
-                if not stop and find_port():
-                    log.info("panel port is back, reconnecting")
+                    if args.blank_on_exit:
+                        p.close(blank=True)
+            except (PanelError, serial.SerialException) as exc:
+                # Panel not plugged in yet, or unplugged mid-run. The context
+                # manager already closed the port; wait for it to (re)appear.
+                if stop:
                     break
+                log.warning("panel lost: %s", exc)
+                log.info("waiting for the panel (polling every %.0f s)", RECONNECT_POLL)
+                while not stop_requested():
+                    # Sleep first: on Windows a replugged port can enumerate
+                    # before it is openable, so never retry back-to-back.
+                    wait(RECONNECT_POLL)
+                    if not stop and find_port():
+                        log.info("panel port is back, reconnecting")
+                        break
+    finally:
+        runtime.release_instance()
     log.info("stopped after %d frames", total_frames)
     return 0
 
@@ -193,6 +252,12 @@ def main(argv=None) -> int:
     p_run.add_argument("--claude", action="store_true",
                        help="split layout: system metrics left, running Claude sessions right")
     p_run.set_defaults(func=cmd_run)
+
+    p_stop = sub.add_parser(
+        "stop",
+        help="ask a running dashboard to exit gracefully "
+             "(rc 0 stopped, 1 none running, 2 not confirmed)")
+    p_stop.set_defaults(func=cmd_stop)
 
     p_prev = sub.add_parser("preview", help="render a PNG without using the panel")
     p_prev.add_argument("-o", "--out", default="preview.png")

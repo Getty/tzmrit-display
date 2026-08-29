@@ -67,6 +67,9 @@ Section "${APPNAME} (required)" SecCore
                  "$INSTDIR\tzmrit-displayw.exe" "run"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Dashboard with Claude sessions.lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "run --claude"
+  ; windowed variant so stopping never flashes a console
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\Stop Dashboard.lnk" \
+                 "$INSTDIR\tzmrit-displayw.exe" "stop"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
   ; the autostart sections below recreate this if selected

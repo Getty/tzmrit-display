@@ -14,7 +14,7 @@ import time
 import serial
 
 import tzmrit_display.panel as panel
-from tzmrit_display import cli
+from tzmrit_display import cli, runtime
 
 INFO = {"data": {"width": 1920, "height": 462, "angle": 270, "version": "Ver3.2",
                  "model": "D215-NOR-FL7707N-9.16inch-hor", "uid": "t",
@@ -66,12 +66,14 @@ class FakeSerial:
         pass
 
 
-def _patch_env(monkeypatch, handlers, fake_find_port, make_serial):
+def _patch_env(monkeypatch, tmp_path, handlers, fake_find_port, make_serial):
     """Wire the fakes into both namespaces that resolve them.
 
     cli imports find_port by name and Panel() resolves its default port via
     panel.find_port, so both bindings must point at the fake. Sleeps are
     capped (not removed) to keep ordering semantics while the test runs fast.
+    The runtime dir is isolated into tmp_path so tests never read or write the
+    real per-user coordination files (or stop a genuinely running dashboard).
     """
     monkeypatch.setattr(signal, "signal", lambda s, h: handlers.__setitem__(s, h))
     real_sleep = time.sleep
@@ -80,9 +82,11 @@ def _patch_env(monkeypatch, handlers, fake_find_port, make_serial):
     monkeypatch.setattr(cli, "find_port", fake_find_port)
     monkeypatch.setattr(panel, "find_port", fake_find_port)
     monkeypatch.setattr(panel.serial, "Serial", make_serial)
+    monkeypatch.setattr(runtime, "runtime_dir", lambda: tmp_path)
+    monkeypatch.setattr(runtime, "STOP_WAIT", 0.5)
 
 
-def test_unplug_midrun_reconnects_with_cold_start(monkeypatch):
+def test_unplug_midrun_reconnects_with_cold_start(monkeypatch, tmp_path):
     """(i) + (ii): the unplug is contained, the wait loop polls, and the new
     port goes through the full cold-start sequence before frames resume."""
     handlers = {}
@@ -115,7 +119,7 @@ def test_unplug_midrun_reconnects_with_cold_start(monkeypatch):
         serials.append(fake)
         return fake
 
-    _patch_env(monkeypatch, handlers, fake_find_port, make_serial)
+    _patch_env(monkeypatch, tmp_path, handlers, fake_find_port, make_serial)
 
     rc = cli.main(["run", "--interval", "0.01"])
 
@@ -133,7 +137,7 @@ def test_unplug_midrun_reconnects_with_cold_start(monkeypatch):
     assert len(_image_frames(second)) >= 1
 
 
-def test_absent_at_start_waits_then_connects(monkeypatch):
+def test_absent_at_start_waits_then_connects(monkeypatch, tmp_path):
     """(iii): no panel at logon means wait, not exit."""
     handlers = {}
     serials = []
@@ -153,7 +157,7 @@ def test_absent_at_start_waits_then_connects(monkeypatch):
         serials.append(fake)
         return fake
 
-    _patch_env(monkeypatch, handlers, fake_find_port, make_serial)
+    _patch_env(monkeypatch, tmp_path, handlers, fake_find_port, make_serial)
 
     rc = cli.main(["run", "--interval", "0.01"])
 
