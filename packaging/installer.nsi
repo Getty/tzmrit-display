@@ -22,10 +22,9 @@ RequestExecutionLevel user
 InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation"
 
-Var RadioState
+Var AutostartSel
 Var AutostartArgs
 
-!define MUI_COMPONENTSPAGE_NODESC
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
@@ -75,31 +74,51 @@ Section "${APPNAME} (required)" SecCore
   WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 SectionEnd
 
-SectionGroup /e "Start at logon" SecGroupAuto
-  Section /o "System dashboard" SecAutoPlain
-    StrCpy $AutostartArgs "run"
-    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run"
-  SectionEnd
-  Section "Dashboard with Claude sessions" SecAutoClaude
-    StrCpy $AutostartArgs "run --claude"
-    CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run --claude"
-  SectionEnd
-  Section /o "No autostart" SecAutoNone
-  SectionEnd
-SectionGroupEnd
+; optional autostart: at most one of the two sections below may be selected
+; (enforced in .onSelChange); selecting neither means no autostart
+Section /o "Start at logon: system dashboard" SecAutoPlain
+  StrCpy $AutostartArgs "run"
+  CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run"
+SectionEnd
 
-; one-of-many behaviour for the autostart group
+Section "Start at logon: dashboard with Claude sessions" SecAutoClaude
+  StrCpy $AutostartArgs "run --claude"
+  CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run --claude"
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} \
+    "Installs the ${APPNAME} program files and Start Menu shortcuts. Required."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecAutoPlain} \
+    "Creates a shortcut in the Windows Startup folder so the system dashboard starts automatically when you log on. At most one autostart option can be selected; select neither for no autostart."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecAutoClaude} \
+    "Creates a shortcut in the Windows Startup folder so the dashboard with Claude sessions starts automatically when you log on. At most one autostart option can be selected; select neither for no autostart."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
 Function .onInit
-  StrCpy $RadioState ${SecAutoClaude}
+  StrCpy $AutostartSel ${SecAutoClaude}
   StrCpy $AutostartArgs "run"
 FunctionEnd
 
+; one-or-none behaviour for the two autostart sections: checking one unchecks
+; the other, unchecking both stays allowed
 Function .onSelChange
-  !insertmacro StartRadioButtons $RadioState
-    !insertmacro RadioButton ${SecAutoPlain}
-    !insertmacro RadioButton ${SecAutoClaude}
-    !insertmacro RadioButton ${SecAutoNone}
-  !insertmacro EndRadioButtons
+  ${If} ${SectionIsSelected} ${SecAutoPlain}
+  ${AndIf} ${SectionIsSelected} ${SecAutoClaude}
+    ${If} $AutostartSel == ${SecAutoPlain}
+      !insertmacro UnselectSection ${SecAutoPlain}
+      StrCpy $AutostartSel ${SecAutoClaude}
+    ${Else}
+      !insertmacro UnselectSection ${SecAutoClaude}
+      StrCpy $AutostartSel ${SecAutoPlain}
+    ${EndIf}
+  ${ElseIf} ${SectionIsSelected} ${SecAutoPlain}
+    StrCpy $AutostartSel ${SecAutoPlain}
+  ${ElseIf} ${SectionIsSelected} ${SecAutoClaude}
+    StrCpy $AutostartSel ${SecAutoClaude}
+  ${Else}
+    StrCpy $AutostartSel -1
+  ${EndIf}
 FunctionEnd
 
 Function LaunchDashboard
