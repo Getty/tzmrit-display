@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 
+import serial
 from PIL import Image
 
 from .claude_sessions import list_sessions, summarize
@@ -21,6 +22,11 @@ log = logging.getLogger("tzmrit_display")
 # a fixed set: temperature and load average are unavailable on Windows, so
 # disk usage moves up rather than leaving a gap.
 SPLIT_METRICS = ("cpu", "ram", "temp", "load", "disk", "net_down", "net_up")
+
+# How often `run` probes for the panel while it is absent or unplugged. A
+# fixed short interval rather than a backoff: listing serial ports is cheap,
+# and the Linux systemd unit already retries on the same order (RestartSec=5).
+RECONNECT_POLL = 3.0
 
 
 def _compose(src, renderer, with_claude):
@@ -101,7 +107,13 @@ def cmd_brightness(args) -> int:
 
 
 def cmd_run(args) -> int:
-    """Continuous dashboard."""
+    """Continuous dashboard.
+
+    Survives the panel being absent at start or unplugged mid-run: the session
+    loop waits for the port to (re)appear and reconnects through the normal
+    cold-start sequence (connect, live mode, brightness). Metric history lives
+    in `src` and is kept across reconnects.
+    """
     src = SystemSource()
     renderer = DashboardRenderer(scale=args.scale)
     stop = False
@@ -113,31 +125,58 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    with Panel() as p:
-        log.info("panel %s on %s, %dx%d", p.info.model, p.port_path, *p.viewport)
-        p.start_live()
-        if args.brightness is not None:
-            p.set_brightness(args.brightness)
+    def wait(seconds):
+        """Sleep in short slices so a stop signal stays responsive."""
+        deadline = time.monotonic() + seconds
+        while not stop and time.monotonic() < deadline:
+            time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
 
-        # Prime the history so the sparklines don't grow out of nothing
-        for _ in range(3):
-            src.sample()
-            time.sleep(0.2)
+    total_frames = 0
+    primed = False
+    while not stop:
+        try:
+            with Panel() as p:
+                log.info("panel %s on %s, %dx%d", p.info.model, p.port_path, *p.viewport)
+                p.start_live()
+                if args.brightness is not None:
+                    p.set_brightness(args.brightness)
 
-        frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
-        while not stop:
-            began = time.monotonic()
-            size = p.show(_compose(src, renderer, args.claude))
-            frames += 1
-            if time.monotonic() - last_log > 60:
-                elapsed = time.monotonic() - t_start
-                log.info("%d frames, %.2f fps, last %.0f KB", frames, frames / elapsed, size / 1024)
-                last_log = time.monotonic()
-            time.sleep(max(0.0, args.interval - (time.monotonic() - began)))
+                if not primed:
+                    # Prime the history so the sparklines don't grow out of nothing
+                    for _ in range(3):
+                        src.sample()
+                        time.sleep(0.2)
+                    primed = True
 
-        if args.blank_on_exit:
-            p.close(blank=True)
-    log.info("stopped after %d frames", frames)
+                frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
+                while not stop:
+                    began = time.monotonic()
+                    size = p.show(_compose(src, renderer, args.claude))
+                    frames += 1
+                    total_frames += 1
+                    if time.monotonic() - last_log > 60:
+                        elapsed = time.monotonic() - t_start
+                        log.info("%d frames, %.2f fps, last %.0f KB", frames, frames / elapsed, size / 1024)
+                        last_log = time.monotonic()
+                    time.sleep(max(0.0, args.interval - (time.monotonic() - began)))
+
+                if args.blank_on_exit:
+                    p.close(blank=True)
+        except (PanelError, serial.SerialException) as exc:
+            # Panel not plugged in yet, or unplugged mid-run. The context
+            # manager already closed the port; wait for it to (re)appear.
+            if stop:
+                break
+            log.warning("panel lost: %s", exc)
+            log.info("waiting for the panel (polling every %.0f s)", RECONNECT_POLL)
+            while not stop:
+                # Sleep first: on Windows a replugged port can enumerate
+                # before it is openable, so never retry back-to-back.
+                wait(RECONNECT_POLL)
+                if not stop and find_port():
+                    log.info("panel port is back, reconnecting")
+                    break
+    log.info("stopped after %d frames", total_frames)
     return 0
 
 
@@ -184,7 +223,10 @@ def main(argv=None) -> int:
     )
     try:
         return args.func(args)
-    except PanelError as exc:
+    except (PanelError, serial.SerialException) as exc:
+        # Backstop for the one-shot commands (and anything unforeseen): a
+        # vanished port must never surface as an unhandled-exception dialog
+        # in the windowed build.
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
