@@ -2,6 +2,7 @@
 name = "tzmrit-display"
 dynamic = ["version"]
 description = "Linux system monitor for HONGTAI USB LCD panels (33c3:7791/7792)"
+authors = [{name = "Torsten Raudssus", email = "torsten@raudssus.de"}]
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

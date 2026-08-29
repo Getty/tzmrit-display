@@ -11,6 +11,9 @@
 !ifndef VERSION
   !error "VERSION is not defined. Build with packaging\build.bat - it passes /DVERSION from pyproject.toml, the single source of the version."
 !endif
+!ifndef VERSION_NUMERIC
+  !error "VERSION_NUMERIC is not defined. Build with packaging\build.bat - it derives the strict X.X.X.X form that VIProductVersion requires from the same package version as VERSION."
+!endif
 !define PUBLISHER "Torsten Raudssus"
 !define URL "https://github.com/Getty/tzmrit-display"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
@@ -36,6 +39,16 @@ Var AutostartArgs
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+; version resource of the setup exe itself (Properties -> Details);
+; VIProductVersion only accepts strict X.X.X.X, hence VERSION_NUMERIC
+VIProductVersion "${VERSION_NUMERIC}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${APPNAME}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "CompanyName" "${PUBLISHER}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "${APPNAME} installer"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 ; -- install -----------------------------------------------------------------
 
