@@ -15,8 +15,8 @@ if exist ".venv\Scripts\tzmrit-display.exe" (
     ".venv\Scripts\tzmrit-display.exe" clear >nul 2>&1
 )
 
-rem -- remove the autostart shortcut -----------------------------------------
-powershell -NoProfile -Command "Remove-Item -LiteralPath ([Environment]::GetFolderPath('Startup')+'\tzmrit-display.lnk') -ErrorAction SilentlyContinue"
+rem -- remove the autostart shortcut (current and pre-rename name) ------------
+powershell -NoProfile -Command "$st=[Environment]::GetFolderPath('Startup'); 'TZMRIT Display.lnk','tzmrit-display.lnk' | ForEach-Object { Remove-Item -LiteralPath ($st+'\'+$_) -ErrorAction SilentlyContinue }"
 
 rem -- remove the virtualenv -------------------------------------------------
 if exist ".venv" rmdir /s /q ".venv"

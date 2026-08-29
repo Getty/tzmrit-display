@@ -8,6 +8,10 @@
 !include "FileFunc.nsh"
 
 !define APPNAME "tzmrit-display"
+; What the user sees (installer window, Start menu, Apps & Features). The
+; technical name above stays in the install dir, registry key, exe and
+; setup-file names; upgrades must clean up shortcuts under the OLD name too.
+!define APPNAME_DISPLAY "TZMRIT Display"
 !ifndef VERSION
   !error "VERSION is not defined. Build with packaging\build.bat - it passes /DVERSION from pyproject.toml, the single source of the version."
 !endif
@@ -18,7 +22,7 @@
 !define URL "https://github.com/Getty/tzmrit-display"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
-Name "${APPNAME} ${VERSION}"
+Name "${APPNAME_DISPLAY} ${VERSION}"
 OutFile "tzmrit-display-setup-${VERSION}.exe"
 Unicode True
 RequestExecutionLevel user
@@ -27,6 +31,11 @@ InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation"
 
 Var AutostartSel
 Var AutostartArgs
+
+; the setup exe and the uninstaller carry the app icon; the shortcuts get
+; theirs from the target exes (embedded via tzmrit-display.spec)
+!define MUI_ICON "icon.ico"
+!define MUI_UNICON "icon.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
@@ -43,16 +52,16 @@ Var AutostartArgs
 ; version resource of the setup exe itself (Properties -> Details);
 ; VIProductVersion only accepts strict X.X.X.X, hence VERSION_NUMERIC
 VIProductVersion "${VERSION_NUMERIC}"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${APPNAME}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${APPNAME_DISPLAY}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "CompanyName" "${PUBLISHER}"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "${APPNAME} installer"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "${APPNAME_DISPLAY} installer"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 ; -- install -----------------------------------------------------------------
 
-Section "${APPNAME} (required)" SecCore
+Section "${APPNAME_DISPLAY} (required)" SecCore
   SectionIn RO
   ; stop a running instance so files can be replaced
   nsExec::Exec 'taskkill /f /im tzmrit-displayw.exe'
@@ -62,21 +71,27 @@ Section "${APPNAME} (required)" SecCore
   SetOutPath "$INSTDIR"
   File /r "dist\tzmrit-display\*.*"
 
-  CreateDirectory "$SMPROGRAMS\${APPNAME}"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\Dashboard.lnk" \
+  CreateDirectory "$SMPROGRAMS\${APPNAME_DISPLAY}"
+  CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\${APPNAME_DISPLAY}.lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "run"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\Dashboard with Claude sessions.lnk" \
+  CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\${APPNAME_DISPLAY} (Claude sessions).lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "run --claude"
   ; windowed variant so stopping never flashes a console
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\Stop Dashboard.lnk" \
+  CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\Stop ${APPNAME_DISPLAY}.lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "stop"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+  CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
   ; the autostart sections below recreate this if selected
+  Delete "$SMSTARTUP\${APPNAME_DISPLAY}.lnk"
+
+  ; upgrade migration: versions before the "${APPNAME_DISPLAY}" naming put
+  ; both the Start menu folder and the startup shortcut under the technical
+  ; name - remove them so an upgrade leaves no dead duplicates
+  RMDir /r "$SMPROGRAMS\${APPNAME}"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APPNAME}"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APPNAME_DISPLAY}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${PUBLISHER}"
   WriteRegStr HKCU "${UNINST_KEY}" "URLInfoAbout" "${URL}"
@@ -94,17 +109,17 @@ SectionEnd
 ; (enforced in .onSelChange); selecting neither means no autostart
 Section /o "Start at logon: system dashboard" SecAutoPlain
   StrCpy $AutostartArgs "run"
-  CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run"
+  CreateShortcut "$SMSTARTUP\${APPNAME_DISPLAY}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run"
 SectionEnd
 
 Section "Start at logon: dashboard with Claude sessions" SecAutoClaude
   StrCpy $AutostartArgs "run --claude"
-  CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run --claude"
+  CreateShortcut "$SMSTARTUP\${APPNAME_DISPLAY}.lnk" "$INSTDIR\tzmrit-displayw.exe" "run --claude"
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} \
-    "Installs the ${APPNAME} program files and Start Menu shortcuts. Required."
+    "Installs the ${APPNAME_DISPLAY} program files and Start Menu shortcuts. Required."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAutoPlain} \
     "Creates a shortcut in the Windows Startup folder so the system dashboard starts automatically when you log on. At most one autostart option can be selected; select neither for no autostart."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAutoClaude} \
@@ -150,7 +165,11 @@ Section "Uninstall"
   ; blank the panel so no stale image stays behind (best effort)
   nsExec::Exec '"$INSTDIR\tzmrit-display.exe" clear'
 
+  ; both namings, defensively: the display name (current installer and dev
+  ; install.bat) and the technical name (anything older)
+  Delete "$SMSTARTUP\${APPNAME_DISPLAY}.lnk"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
+  RMDir /r "$SMPROGRAMS\${APPNAME_DISPLAY}"
   RMDir /r "$SMPROGRAMS\${APPNAME}"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKCU "${UNINST_KEY}"

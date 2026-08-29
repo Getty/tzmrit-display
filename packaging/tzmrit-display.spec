@@ -80,6 +80,8 @@ exe_cli = EXE(
     exclude_binaries=True,
     name="tzmrit-display",
     console=True,
+    # relative icon paths resolve against the spec's directory (SPECPATH)
+    icon="icon.ico",
     version=_versioninfo(
         "tzmrit-display — system monitor for HONGTAI USB LCD panels"
     ),
@@ -92,6 +94,7 @@ exe_win = EXE(
     exclude_binaries=True,
     name="tzmrit-displayw",
     console=False,
+    icon="icon.ico",
     version=_versioninfo(
         "tzmrit-display — system monitor for HONGTAI USB LCD panels (windowed)"
     ),

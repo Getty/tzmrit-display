@@ -49,7 +49,9 @@ set "MODEARGS=-m tzmrit_display run"
 if %errorlevel%==1 set "MODEARGS=-m tzmrit_display run --claude"
 
 rem -- autostart shortcut in the Startup folder (no admin needed) ------------
-powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\tzmrit-display.lnk'); $s.TargetPath='%CD%\.venv\Scripts\pythonw.exe'; $s.Arguments='%MODEARGS%'; $s.WorkingDirectory='%CD%'; $s.Save()" || exit /b 1
+rem Display name "TZMRIT Display" matches the installer; drop the old
+rem technical-named shortcut so an upgrade leaves no duplicate autostart.
+powershell -NoProfile -Command "$st=[Environment]::GetFolderPath('Startup'); Remove-Item -LiteralPath ($st+'\tzmrit-display.lnk') -ErrorAction SilentlyContinue; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($st+'\TZMRIT Display.lnk'); $s.TargetPath='%CD%\.venv\Scripts\pythonw.exe'; $s.Arguments='%MODEARGS%'; $s.WorkingDirectory='%CD%'; $s.Save()" || exit /b 1
 
 rem -- and start it right now ------------------------------------------------
 start "" "%CD%\.venv\Scripts\pythonw.exe" %MODEARGS%
