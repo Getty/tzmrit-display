@@ -2,9 +2,9 @@
 
 # tzmrit-display
 
-**Your PC case display on Linux — as a system monitor, and as a view of your running Claude sessions.**
+**Your PC case display on Linux and Windows — as a system monitor, and as a view of your running Claude sessions.**
 
-For the **TZMRIT 9.16"** and compatible HONGTAI panels, which otherwise only a Windows application can drive.
+For the **TZMRIT 9.16"** and compatible HONGTAI panels, which otherwise only the vendor's Windows application can drive.
 
 </div>
 
@@ -25,6 +25,9 @@ costs in memory. Up to **eight sessions** fit without truncation.
 ```bash
 lsusb | grep 33c3
 ```
+
+On Windows: open *Device Manager* → *Ports (COM & LPT)* and look for a
+`USB Serial Device`, or just run `tzmrit-display info` after installing.
 
 | | |
 |---|---|
@@ -67,11 +70,38 @@ sensors, `/proc`) have been made portable. Windows binds the panel with its
 built-in `usbser.sys`, so no driver install is needed. Close the vendor
 application first — it holds the port exclusively.
 
-The easiest path is the installer, `tzmrit-display-setup-<version>.exe`: no
-Python required, per-user install, uninstaller in *Apps & Features*, optional
-autostart at logon. Build it with `packaging\build.bat` (needs NSIS).
+### The installer
 
-From a checkout it is one command:
+The easiest path: download `tzmrit-display-setup-<version>.exe` from the
+[releases](https://github.com/Getty/tzmrit-display/releases) and run it. No
+Python, no git, no admin rights — it installs per-user and registers an
+uninstaller in *Apps & Features*. During setup you pick what starts
+automatically when you log on: the system dashboard, the dashboard with
+Claude sessions, or neither (untick both).
+
+Afterwards the Start menu has a **TZMRIT Display** folder:
+
+| Entry | What it does |
+|---|---|
+| **TZMRIT Display** | start the system dashboard |
+| **TZMRIT Display (Claude sessions)** | start the split view with your Claude sessions |
+| **Stop TZMRIT Display** | stop whichever dashboard is running |
+| **Uninstall** | remove everything (also listed in *Apps & Features*) |
+
+Two things you never have to manage yourself:
+
+- **Switching views.** Only one dashboard drives the panel at a time. Starting
+  one variant while the other is running replaces it — click the entry you
+  want, done. No stopping first, no second process fighting over the port.
+- **Plugging and unplugging.** If the panel is unplugged — or not yet plugged
+  in when you log on — the dashboard waits quietly in the background and picks
+  the panel up by itself a few seconds after it appears. No error dialogs, no
+  restart needed.
+
+The same stop control exists on the command line: `tzmrit-display stop`.
+The installer is built with `packaging\build.bat` (needs NSIS).
+
+### From a checkout
 
 ```powershell
 git clone https://github.com/Getty/tzmrit-display.git
@@ -81,20 +111,17 @@ install.bat
 
 `install.bat` sets up a virtualenv, verifies the panel answers, and puts an
 autostart shortcut in the Startup folder; `uninstall.bat` reverses it.
-Details and verified-hardware notes: [docs/windows.md](docs/windows.md).
 
-> **Status: untested on real hardware.** The code paths exist and are covered
-> by tests against a simulated Windows environment, but nobody has run it on
-> an actual Windows machine yet. Without temperature and load average the
-> layout shows five columns instead of six. See
-> [docs/windows.md](docs/windows.md) for the verification checklist — and
-> please open an issue with what you find.
+Without a temperature sensor and load average (neither exists on Windows) the
+layout shows five columns instead of six — the width adapts. Details and
+verified-hardware notes: [docs/windows.md](docs/windows.md).
 
 ## Usage
 
 ```bash
 tzmrit-display run --claude       # system metrics + Claude sessions
 tzmrit-display run                # metrics only, six columns instead of four
+tzmrit-display stop               # ask a running dashboard to exit cleanly
 tzmrit-display info               # what the device says about itself
 tzmrit-display preview -o out.png # render the layout without using the panel
 tzmrit-display image picture.png  # show any image
@@ -109,7 +136,8 @@ hold the port, so you can iterate on the design while the monitor keeps running.
 ## Running it permanently
 
 The panel only shows something **while a process sends keepalives** — with no
-program running, the screen goes black. Hence a service:
+program running, the screen goes black. On Windows that is the installer's
+autostart choice (or `install.bat`'s Startup shortcut); on Linux, a service:
 
 ```bash
 mkdir -p ~/.config/systemd/user
