@@ -33,6 +33,9 @@ _TICKS_PER_SECOND = 10 ** 7
 _UNIX_EPOCH_SECONDS = 62_135_596_800  # 0001-01-01 .. 1970-01-01
 
 SESSION_DIR = Path.home() / ".claude" / "sessions"
+# Per-session transcript lives here as <cwd-encoded>/<sessionId>.jsonl. Its
+# mtime is the "last LLM activity" clock (see _transcript_mtime).
+PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # Order of urgency: whatever is waiting on a human goes to the top.
 STATUS_ORDER = {"requires_action": 0, "busy": 1, "idle": 2}
@@ -174,6 +177,67 @@ def _fmt_age(seconds: float) -> str:
     return f"{hours // 24}d{hours % 24}h"
 
 
+def _fmt_inactive(seconds: float) -> str:
+    """Single-unit 'time since last LLM activity': 3s, 6m, 1h.
+
+    Deliberately one unit only (not _fmt_age's two): this is a live-updating
+    counter that resets to a few seconds on every turn, so the coarse unit is
+    all that reads at a glance.
+    """
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h"
+
+
+# The transcript's mtime is the last-LLM-activity clock; globbing every session
+# every frame is wasteful, so the resolved mtime is cached briefly.
+_ACTIVE_TTL = 2.0
+_active_cache: dict[str, tuple[float, float | None]] = {}
+
+
+def _transcript_mtime(session_id: str, ttl: float = _ACTIVE_TTL,
+                      projects: Path | None = None) -> float | None:
+    """Epoch mtime of the session's transcript jsonl, or None if not found.
+
+    The transcript lives at `~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl`;
+    the directory is the cwd path-encoded, so rather than reconstruct that
+    encoding we glob by sessionId, which is unique. The file is appended on
+    every LLM turn, so its mtime is ~1 s old for a busy session and grows while
+    it sits idle - exactly the "time since last activity" the counter wants,
+    and unlike statusUpdatedAt it does not freeze during a long busy stretch.
+
+    Caveat: a non-LLM write (transcript compaction, for one) also bumps the
+    mtime, so this is a close proxy rather than an exact last-turn timestamp.
+    """
+    if not session_id:
+        return None
+    now = time.monotonic()
+    hit = _active_cache.get(session_id)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    projects = projects or PROJECTS_DIR
+    mtime: float | None = None
+    try:
+        for path in projects.glob(f"*/{session_id}.jsonl"):
+            try:
+                m = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime is None or m > mtime:
+                mtime = m
+    except OSError:
+        mtime = None
+    _active_cache[session_id] = (now, mtime)
+    # Don't let entries for ended sessions accumulate forever
+    if len(_active_cache) > 64:
+        for dead in [k for k, v in _active_cache.items() if now - v[0] > 60]:
+            _active_cache.pop(dead, None)
+    return mtime
+
+
 @dataclass
 class Session:
     pid: int
@@ -185,6 +249,7 @@ class Session:
     status_since: float = 0.0
     rss: int = 0
     child_count: int = 0
+    active_at: float = 0.0
 
     @property
     def project(self) -> str:
@@ -212,6 +277,21 @@ class Session:
         if not self.status_since:
             return ""
         return _fmt_age(time.time() - self.status_since)
+
+    @property
+    def inactive_seconds(self) -> float:
+        """Seconds since the last LLM activity (transcript write).
+
+        Falls back to status_since when no transcript file was located.
+        """
+        ref = self.active_at or self.status_since
+        if not ref:
+            return 0.0
+        return max(0.0, time.time() - ref)
+
+    @property
+    def inactive_text(self) -> str:
+        return _fmt_inactive(self.inactive_seconds)
 
     @property
     def sort_key(self) -> tuple:
@@ -252,6 +332,7 @@ def list_sessions(directory: Path | None = None) -> list[Session]:
             status_since=float(stamp) / 1000.0 if stamp else 0.0,
         ))
         out[-1].rss, out[-1].child_count = process_memory(pid)
+        out[-1].active_at = _transcript_mtime(out[-1].session_id) or 0.0
 
     out.sort(key=lambda s: s.sort_key)
     return out

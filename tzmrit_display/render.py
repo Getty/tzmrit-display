@@ -32,6 +32,31 @@ def _color(status: str) -> str:
     return {"warn": T.WARN, "crit": T.CRIT}.get(status, T.ACCENT)
 
 
+def _mix(hex_a: str, hex_b: str, t: float) -> tuple[int, int, int]:
+    """Blend two #RRGGBB colors, t=0 -> a, t=1 -> b."""
+    a = tuple(int(hex_a[i:i + 2], 16) for i in (1, 3, 5))
+    b = tuple(int(hex_b[i:i + 2], 16) for i in (1, 3, 5))
+    return tuple(round(a[k] + (b[k] - a[k]) * t) for k in range(3))
+
+
+# Inactivity escalation for the session counter. These are deliberately MUTED
+# blends of gray toward the status hue, not the pure reserved WARN/CRIT: the
+# numeric value ("6m", "1h") is the real (non-color) encoding, so the tint only
+# nudges. ~55% keeps them recognizably grau-gelb / grau-rot without claiming to
+# be the status colors, which stay reserved for crossed thresholds + a marker.
+_STALE_WARN = _mix(T.INK_DIM, T.WARN, 0.55)   # >= 5m idle
+_STALE_CRIT = _mix(T.INK_DIM, T.CRIT, 0.55)   # >= 1h idle
+
+
+def _inactive_color(seconds: float):
+    """Color for the inactivity counter, escalating with idle time."""
+    if seconds >= 3600:
+        return _STALE_CRIT
+    if seconds >= 300:
+        return _STALE_WARN
+    return T.INK_FAINT
+
+
 def _spark_points(metric, x0, y0, w, h):
     """Map a history into pixel coordinates.
 
@@ -159,8 +184,50 @@ class DashboardRenderer:
             d.text((fx + d.textlength(key, font=self.f_foot_key) + 14 * s, y - 2 * s),
                    val, font=self.f_small, fill=T.INK_DIM)
 
+    def _name_segments(self, d, name, project, avail):
+        """Split a session name into draw segments that fit within `avail` px.
+
+        Returns a list of (text, is_prefix) pairs. For a derived name (one that
+        starts with its project) the project prefix is a separate segment so it
+        can be tinted, and the ELLIPSIS goes inside the prefix so the unique
+        suffix survives: `p5-…-plugin-docker-api-7d` truncates to
+        `p5-dist-zilla-plugin…-7d`, keeping the `-7d`. Only when the suffix
+        will not fit even beside a minimal (2-char) prefix does it fall back to
+        right-truncating the whole name as one base-colored segment - which is
+        also how a non-derived name is always handled.
+        """
+        font = self.f_session
+
+        def tl(t):
+            return d.textlength(t, font=font)
+
+        if project and name.startswith(project) and name != project:
+            prefix, suffix = name[:len(project)], name[len(project):]
+            if tl(prefix + suffix) <= avail:
+                return [(prefix, True), (suffix, False)]
+            if len(prefix) >= 2:
+                p = prefix
+                while len(p) > 2 and tl(p + "…" + suffix) > avail:
+                    p = p[:-1]
+                if tl(p + "…" + suffix) <= avail:
+                    return [(p + "…", True), (suffix, False)]
+            # Suffix won't fit even beside a minimal prefix: fall through.
+
+        # Non-derived, or the fallback: right-truncate the whole name.
+        t = name
+        while t and tl(t) > avail:
+            t = t[:-1]
+        if t != name:
+            t = t[:-1] + "…" if len(t) > 1 else t
+        return [(t, False)]
+
     def _session_row(self, d, sess, x, w, y):
-        """One session: marker, name, project, status, age."""
+        """One session: inactivity counter, marker, name, memory, status.
+
+        The name's project prefix (present in derived names) is drawn in the
+        warm amber tint so the redundant project reads as secondary and the
+        unique suffix pops; the sub-line is memory only, the project dropped.
+        """
         s = self.scale
         if sess.waiting:
             color = T.WARN
@@ -170,40 +237,44 @@ class DashboardRenderer:
             color = T.INK_FAINT
 
         cy = y + 15 * s
+        # Left gutter: time since last LLM activity, right-aligned in a fixed
+        # width so the markers and names still line up whatever the value.
+        gut = 52 * s
+        d.text((x + gut - 10 * s, cy), sess.inactive_text, font=self.f_session_sub,
+               fill=_inactive_color(sess.inactive_seconds), anchor="rm")
+
+        mk = x + gut
         if sess.waiting:
             # A triangle rather than a dot: the one state that concerns you is
             # legible without relying on color perception.
-            self._warning_mark(d, x, y + 5 * s, 21 * s, color)
+            self._warning_mark(d, mk, y + 5 * s, 21 * s, color)
         else:
             r = 8 * s
-            box = [x + 1 * s, cy - r, x + 1 * s + 2 * r, cy + r]
+            box = [mk + 1 * s, cy - r, mk + 1 * s + 2 * r, cy + r]
             if sess.working:
                 d.ellipse(box, fill=color)
             else:
                 d.ellipse(box, outline=color, width=max(1, 2 * s))
 
-        name_x = x + 34 * s
+        name_x = mk + 34 * s
         right = x + w
         status_w = d.textlength(sess.status_text, font=self.f_session_sub)
-        name = sess.name
-        # Truncate the name before it can run into the status text
+        # Reserve room for the status word before the name can run into it
         avail = right - name_x - status_w - 20 * s
-        while name and d.textlength(name, font=self.f_session) > avail:
-            name = name[:-1]
-        if name != sess.name:
-            name = name[:-1] + "…" if len(name) > 1 else name
 
-        d.text((name_x, y), name, font=self.f_session,
-               fill=T.INK if (sess.waiting or sess.working) else T.INK_DIM)
-        sub = sess.project
+        base = T.INK if (sess.waiting or sess.working) else T.INK_DIM
+        seg_x = name_x
+        for text, is_prefix in self._name_segments(d, sess.name, sess.project, avail):
+            d.text((seg_x, y), text, font=self.f_session,
+                   fill=T.ACCENT_WARM if is_prefix else base)
+            seg_x += d.textlength(text, font=self.f_session)
+
         if sess.memory_text:
-            # Memory including MCP child processes - they are the bulk of it
-            sub = f"{sub} · {sess.memory_text}"
-        d.text((name_x, y + 30 * s), sub, font=self.f_session_sub, fill=T.INK_FAINT)
+            # Memory including MCP child processes - they are the bulk of it.
+            # The project is not repeated here; it shows as the tinted prefix.
+            d.text((name_x, y + 30 * s), sess.memory_text,
+                   font=self.f_session_sub, fill=T.INK_FAINT)
         d.text((right, y), sess.status_text, font=self.f_session_sub, fill=color, anchor="ra")
-        if sess.age_text:
-            d.text((right, y + 30 * s), sess.age_text, font=self.f_session_sub,
-                   fill=T.INK_FAINT, anchor="ra")
 
     def _sessions(self, d, sessions, summary, x0, w, y0, y1):
         """Session list, most urgent first.
@@ -289,8 +360,47 @@ class DashboardRenderer:
 
         return self._finish(img)
 
+    def _limit_bars(self, d, rows, x0, x1, y):
+        """Rate-limit budget as two wide bars spanning the footer's right half.
+
+        The pair fills x0..x1 side by side, in the same two blues as the
+        sparklines: the consumed fraction (percent/100 from the left) is the
+        graph's bright line color T.ACCENT, the remaining budget the graph's
+        dark fill family. The sparkline fill is ACCENT at alpha 46 over
+        SURFACE, i.e. opaque _mix(SURFACE, ACCENT, 0.18); left there its
+        contrast with SURFACE text is only 1.3:1, so it is lightened along the
+        same SURFACE->ACCENT axis to t=0.75 (#4580C4). That clears WCAG AA for
+        the near-black SURFACE text at 4.75:1, while staying visibly darker
+        than the bright ACCENT (7.69:1) beside it so the two blues still read
+        as filled-vs-remaining. A bar is itself a marker shape, so the colored
+        chip means something without the theme.py ban on bare colored text.
+        """
+        s = self.scale
+        n = max(1, len(rows))
+        gap = 18 * s
+        h = 30 * s
+        rad = int(h // 2)
+        pad = 16 * s
+        bw = (x1 - x0 - (n - 1) * gap) / n
+        cy = y + h / 2
+        remain = _mix(T.SURFACE, T.ACCENT, 0.75)  # lightened graph-fill blue
+        for i, lim in enumerate(rows):
+            bx = x0 + i * (bw + gap)
+            d.rounded_rectangle([bx, y, bx + bw, y + h], radius=rad, fill=remain)
+            fw = bw * max(0, min(100, lim.percent)) / 100
+            if fw > 0:
+                d.rounded_rectangle([bx, y, bx + fw, y + h],
+                                    radius=int(min(rad, fw / 2)), fill=T.ACCENT)
+            d.text((bx + pad, cy), f"{lim.label} {lim.percent}%",
+                   font=self.f_small, fill=T.SURFACE, anchor="lm")
+            reset = lim.reset_text()
+            if reset:
+                d.text((bx + bw - pad, cy), reset,
+                       font=self.f_small, fill=T.SURFACE, anchor="rm")
+
     def render_split(self, metrics: dict, sessions: list, summary: str,
-                     footer: list[tuple[str, str]] | None = None) -> Image.Image:
+                     footer: list[tuple[str, str]] | None = None,
+                     limits=None) -> Image.Image:
         """Four metrics on the left, running Claude sessions on the right."""
         s = self.scale
         W, H = T.WIDTH * s, T.HEIGHT * s
@@ -298,9 +408,6 @@ class DashboardRenderer:
         d = ImageDraw.Draw(img)
         mx = T.MARGIN_X * s
 
-        # A session waiting for input belongs in the header - it is the one
-        # thing worth looking up for.
-        waiting = [x for x in sessions if x.waiting]
         self._header(d, W)
 
         split_x = int(W * 0.46)
@@ -323,14 +430,16 @@ class DashboardRenderer:
         self._sessions(d, sessions, summary, right_x, W - mx - right_x,
                        (T.TILE_TOP + 40) * s, (T.FOOTER_Y - 22) * s)
 
-        # Bottom row: host facts on the left, the waiting notice on the right
+        # Bottom band: host facts on the left half; the two limit bars span the
+        # right half. The "waiting" notice that used to sit here is dropped -
+        # a waiting session already shows in the list (WARN triangle + "waiting
+        # for you") and in the CLAUDE header count, so a footer copy is redundant.
         fy = T.FOOTER_Y * s
         d.line([(mx, fy - 18 * s), (W - mx, fy - 18 * s)], fill=T.INK_FAINT, width=max(1, s))
         if footer:
             self._footer_row(d, footer, mx, split_x - mx - 20 * s, fy)
-        if waiting:
-            text = ("1 session is waiting for you" if len(waiting) == 1
-                    else f"{len(waiting)} sessions are waiting for you")
-            d.text((W - mx, fy - 2 * s), text, font=self.f_small, fill=T.WARN, anchor="ra")
+        rows = limits.rows if limits else []
+        if rows:
+            self._limit_bars(d, rows, right_x, W - mx, fy - 10 * s)
 
         return self._finish(img)

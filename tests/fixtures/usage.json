@@ -1,0 +1,39 @@
+{
+  "five_hour": {
+    "utilization": 13.0,
+    "resets_at": "2026-08-29T09:20:00Z"
+  },
+  "seven_day": {
+    "utilization": 37.0,
+    "resets_at": "2026-08-31T00:00:00Z"
+  },
+  "limits": [
+    {
+      "kind": "session",
+      "group": "default",
+      "percent": 13,
+      "severity": "normal",
+      "resets_at": "2026-08-29T09:20:00Z",
+      "is_active": true,
+      "scope": null
+    },
+    {
+      "kind": "weekly_all",
+      "group": "default",
+      "percent": 37,
+      "severity": "normal",
+      "resets_at": "2026-08-31T00:00:00Z",
+      "is_active": true,
+      "scope": null
+    },
+    {
+      "kind": "weekly_scoped",
+      "group": "opus",
+      "percent": 52,
+      "severity": "warning",
+      "resets_at": "2026-08-31T00:00:00Z",
+      "is_active": true,
+      "scope": {"model": {"display_name": "Claude Opus"}}
+    }
+  ]
+}

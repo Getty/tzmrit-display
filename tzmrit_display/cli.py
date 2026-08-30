@@ -12,6 +12,7 @@ import serial
 from PIL import Image
 
 from . import runtime
+from .claude_limits import get_limits
 from .claude_sessions import list_sessions, summarize
 from .panel import Panel, PanelError, find_port
 from .render import DashboardRenderer
@@ -43,7 +44,9 @@ def _compose(src, renderer, with_claude):
         if key not in chosen and len(chosen) < 4:
             chosen[key] = metric
     sessions = list_sessions()
-    return renderer.render_split(chosen, sessions, summarize(sessions), src.footer())
+    limits = get_limits()  # cached, refreshed off-thread; None until it lands
+    return renderer.render_split(chosen, sessions, summarize(sessions),
+                                 src.footer(), limits)
 
 
 def cmd_info(args) -> int:
@@ -204,6 +207,12 @@ def cmd_run(args) -> int:
                             src.sample()
                             time.sleep(0.2)
                         primed = True
+
+                    # Kick the first usage fetch off-thread now, so the limit
+                    # bars have data as early as possible on (re)connect rather
+                    # than only after the first frame triggers it.
+                    if args.claude:
+                        get_limits()
 
                     frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
                     while not stop_requested():

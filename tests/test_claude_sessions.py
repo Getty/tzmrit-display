@@ -10,7 +10,9 @@ import pytest
 from tzmrit_display.claude_sessions import (
     Session,
     _fmt_age,
+    _fmt_inactive,
     _proc_start,
+    _transcript_mtime,
     _windows_start_ticks,
     list_sessions,
     summarize,
@@ -132,6 +134,45 @@ class TestFormatting:
 
     def test_summary_without_sessions(self):
         assert summarize([]) == "no sessions"
+
+
+class TestInactivity:
+    """Single-unit 'time since last LLM activity' counter."""
+
+    @pytest.mark.parametrize("seconds,expected", [
+        (0, "0s"), (1, "1s"), (3, "3s"), (59, "59s"),   # boundary at 60
+        (60, "1m"), (120, "2m"), (3599, "59m"),         # boundary at 3600
+        (3600, "1h"), (7200, "2h"),
+    ])
+    def test_inactive_format(self, seconds, expected):
+        assert _fmt_inactive(seconds) == expected
+
+    def test_inactive_uses_active_at(self):
+        s = Session(1, "n", "/x", "busy", "i", active_at=time.time() - 65)
+        assert s.inactive_text == "1m"
+
+    def test_inactive_falls_back_to_status_since(self):
+        s = Session(1, "n", "/x", "idle", "i", status_since=time.time() - 2)
+        assert s.inactive_text == "2s"
+
+    def test_inactive_zero_without_any_reference(self):
+        s = Session(1, "n", "/x", "idle", "i")
+        assert s.inactive_seconds == 0.0
+        assert s.inactive_text == "0s"
+
+    def test_transcript_mtime_reads_by_session_id(self, tmp_path):
+        proj = tmp_path / "home-user-dev-x"
+        proj.mkdir()
+        f = proj / "sid-abc.jsonl"
+        f.write_text("{}\n", encoding="utf-8")
+        os.utime(f, (1_000_000, 1_700_000_000))
+        assert _transcript_mtime("sid-abc", ttl=0, projects=tmp_path) == 1_700_000_000
+
+    def test_transcript_mtime_missing_is_none(self, tmp_path):
+        assert _transcript_mtime("nope", ttl=0, projects=tmp_path) is None
+
+    def test_transcript_mtime_empty_id_is_none(self, tmp_path):
+        assert _transcript_mtime("", ttl=0, projects=tmp_path) is None
 
 
 class TestMemory:

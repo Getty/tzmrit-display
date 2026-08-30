@@ -28,6 +28,12 @@ INK_FAINT = "#4A5262"
 ACCENT = "#58A6FF"
 WARN = "#F2CC60"
 CRIT = "#FF7B72"
+# A muted warm amber, complementary to ACCENT, for a categorical (non-status)
+# tint - the redundant project prefix in a session name. Deliberately kept
+# clear of the status colors: hue 26.8 deg sits between CRIT (3.8) and WARN
+# (44.4), ~18-23 deg from each, so it never reads as a warning. Contrast on
+# SURFACE 8.2:1.
+ACCENT_WARM = "#E0985E"
 
 # -- Geometry ------------------------------------------------------------
 WIDTH, HEIGHT = 1920, 462

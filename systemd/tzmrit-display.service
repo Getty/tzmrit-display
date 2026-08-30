@@ -2,6 +2,11 @@
 Description=HONGTAI USB LCD system monitor
 Documentation=https://github.com/Getty/tzmrit-display
 After=graphical-session.target
+# The panel hangs off a USB port that may not exist yet at boot, and a bad USB
+# port can crash-loop the process; keep restart attempts going indefinitely
+# instead of letting systemd give up after the default 5-in-10s. This key only
+# takes effect in [Unit] - in [Service] systemd ignores it.
+StartLimitIntervalSec=0
 
 # %h is the home directory. If the project lives elsewhere, adjust both paths.
 [Service]
@@ -10,9 +15,6 @@ ExecStart=%h/dev/display/.venv/bin/python -m tzmrit_display run --claude --inter
 WorkingDirectory=%h/dev/display
 Restart=on-failure
 RestartSec=5
-# The panel hangs off a USB port that may not exist yet at boot, so restart
-# attempts keep going indefinitely.
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target

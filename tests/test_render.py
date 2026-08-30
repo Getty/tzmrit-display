@@ -5,8 +5,42 @@ import time
 
 from tzmrit_display import theme as T
 from tzmrit_display.claude_sessions import Session
-from tzmrit_display.render import DashboardRenderer, _spark_points
+from tzmrit_display.render import (
+    DashboardRenderer,
+    _STALE_CRIT,
+    _STALE_WARN,
+    _inactive_color,
+    _spark_points,
+)
 from tzmrit_display.sources import Metric
+
+
+def _rgb(h):
+    return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+class TestInactivityColor:
+    """The session inactivity counter escalates in color, but with MUTED
+    blends - never the pure reserved WARN/CRIT."""
+
+    def test_under_five_minutes_is_neutral(self):
+        assert _inactive_color(0) == T.INK_FAINT
+        assert _inactive_color(299) == T.INK_FAINT
+
+    def test_five_minutes_is_muted_yellow(self):
+        assert _inactive_color(300) == _STALE_WARN
+        assert _inactive_color(3599) == _STALE_WARN
+
+    def test_one_hour_is_muted_red(self):
+        assert _inactive_color(3600) == _STALE_CRIT
+        assert _inactive_color(7200) == _STALE_CRIT
+
+    def test_muted_blends_are_not_the_pure_status_colors(self):
+        assert _STALE_WARN != _rgb(T.WARN)
+        assert _STALE_CRIT != _rgb(T.CRIT)
+        # and clearly toward gray: darker/less saturated than the pure hue
+        assert _STALE_WARN[0] < _rgb(T.WARN)[0]
+        assert _STALE_CRIT[0] < _rgb(T.CRIT)[0]
 
 
 class TestMetricStatus:
@@ -86,6 +120,59 @@ class TestRenderer:
         assert img.size == (T.WIDTH, T.HEIGHT)
 
 
+class TestNameSegments:
+    """Name truncation must keep the unique suffix and tint the project prefix."""
+
+    def _draw(self):
+        from PIL import Image, ImageDraw
+        return ImageDraw.Draw(Image.new("RGB", (2000, 100)))
+
+    def _width(self, r, d, text):
+        return d.textlength(text, font=r.f_session)
+
+    def test_short_derived_name_splits_untruncated(self):
+        r = DashboardRenderer(scale=1)
+        d = self._draw()
+        segs = r._name_segments(d, "display-c0", "display", 10_000)
+        assert segs == [("display", True), ("-c0", False)]
+
+    def test_long_derived_name_keeps_suffix_with_ellipsis_in_prefix(self):
+        r = DashboardRenderer(scale=1)
+        d = self._draw()
+        name = "p5-dist-zilla-plugin-docker-api-7d"
+        project = "p5-dist-zilla-plugin-docker-api"
+        full = self._width(r, d, name)
+        segs = r._name_segments(d, name, project, full * 0.6)  # forces truncation
+        assert len(segs) == 2
+        prefix, suffix = segs
+        # the real suffix survives, in the base color (is_prefix False)
+        assert suffix == ("-7d", False)
+        # the prefix is tinted, truncated, and carries the ellipsis
+        assert prefix[1] is True
+        assert prefix[0].endswith("…")
+        assert prefix[0].startswith("p5")
+        # and the whole thing actually fits the budget
+        drawn = prefix[0] + suffix[0]
+        assert self._width(r, d, drawn) <= full * 0.6
+
+    def test_non_derived_name_is_single_base_segment(self):
+        r = DashboardRenderer(scale=1)
+        d = self._draw()
+        segs = r._name_segments(d, "standalone-agent", "other", 10_000)
+        assert segs == [("standalone-agent", False)]
+
+    def test_tiny_budget_falls_back_to_whole_name_truncation(self):
+        r = DashboardRenderer(scale=1)
+        d = self._draw()
+        name = "p5-dist-zilla-plugin-docker-api-7d"
+        project = "p5-dist-zilla-plugin-docker-api"
+        # Too narrow even for a minimal prefix + the suffix -> one base segment
+        segs = r._name_segments(d, name, project, self._width(r, d, "-7dxx"))
+        assert len(segs) == 1
+        assert segs[0][1] is False
+        assert segs[0][0].endswith("…")
+
+
 class TestSplitLayout:
     def _sessions(self, n, waiting=1):
         now = time.time()
@@ -114,6 +201,29 @@ class TestSplitLayout:
 
     def test_split_without_sessions(self):
         img = DashboardRenderer(scale=1).render_split(self._four(), [], "no sessions")
+        assert img.size == (T.WIDTH, T.HEIGHT)
+
+    def _limits(self):
+        from datetime import datetime, timedelta, timezone
+        from tzmrit_display.claude_limits import Limit, Limits
+        now = datetime.now(timezone.utc)
+        return Limits(
+            session=Limit("Session", 14, "normal", now + timedelta(hours=4, minutes=20)),
+            weekly=Limit("Weekly", 37, "normal", now + timedelta(days=3)),
+        )
+
+    def test_split_with_limit_bars_renders(self):
+        img = DashboardRenderer(scale=1).render_split(
+            self._four(), self._sessions(3, waiting=0), "3 sessions",
+            [("HOST", "x")], self._limits())
+        assert img.size == (T.WIDTH, T.HEIGHT)
+
+    def test_limit_bars_render_with_a_waiting_session(self):
+        """A waiting session no longer draws a footer notice; the wide bars
+        occupy the full right half regardless."""
+        img = DashboardRenderer(scale=1).render_split(
+            self._four(), self._sessions(3, waiting=2), "3 sessions",
+            [("HOST", "x")], self._limits())
         assert img.size == (T.WIDTH, T.HEIGHT)
 
     def test_split_with_many_sessions_does_not_overflow(self):
