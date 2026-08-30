@@ -37,15 +37,33 @@ SESSION_DIR = Path.home() / ".claude" / "sessions"
 # mtime is the "last LLM activity" clock (see _transcript_mtime).
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
-# Order of urgency: whatever is waiting on a human goes to the top.
-STATUS_ORDER = {"requires_action": 0, "busy": 1, "idle": 2}
+# The waiting-for-a-human state has two spellings on the wire: Claude Code
+# >= 2.1.251 writes "waiting", older versions wrote "requires_action". Both mean
+# the same thing here. This set is the single source of truth - the sort order,
+# the status label and Session.waiting all derive from it, so a third spelling
+# only ever has to be added in one place.
+WAITING_STATUSES = frozenset({"requires_action", "waiting"})
 
-STATUS_TEXT = {
-    "requires_action": "waiting for you",
+# Order of urgency: whatever is waiting on a human goes to the top (0).
+STATUS_ORDER = {s: 0 for s in WAITING_STATUSES} | {"busy": 1, "idle": 2}
+
+STATUS_TEXT = {s: "waiting for you" for s in WAITING_STATUSES} | {
     "busy": "working",
     "idle": "ready",
     "offline": "offline",
 }
+
+# A busy session counts as *working* only while its transcript (the real
+# LLM-activity clock, see _transcript_mtime) is fresh. Claude Code can leave
+# `status: "busy"` frozen in the session file long after the turn ended, so the
+# status field alone lies. The window is generous on purpose: the transcript is
+# appended per LLM turn, and a single long turn (heavy thinking + a long
+# generation) writes nothing meanwhile, so a tight threshold would flicker a
+# genuinely-working session to hollow mid-turn. 120s clears any realistic turn
+# while still catching the frozen-status bug (stale by many minutes to hours).
+# Bias is deliberate: a false "working" is a minor annoyance, a false "idle" on
+# a session that is actually crunching is the worse error.
+WORKING_ACTIVE_WINDOW = 120.0
 
 
 def _proc_start(pid: int) -> str | None:
@@ -258,14 +276,37 @@ class Session:
 
     @property
     def waiting(self) -> bool:
-        return self.status == "requires_action"
+        return self.status in WAITING_STATUSES
 
     @property
     def working(self) -> bool:
-        return self.status == "busy"
+        """Busy *and* actually active right now.
+
+        `status == "busy"` is necessary but not sufficient: Claude Code can
+        leave that field frozen after a turn ends. The transcript mtime
+        (`active_at`) is the honest clock, so a busy session is working only
+        while that clock is within WORKING_ACTIVE_WINDOW. When there is no
+        transcript file at all (`active_at == 0.0`, e.g. a just-started
+        session) there is no reliable clock, so we trust the status rather than
+        hide fresh work - note this deliberately does NOT fall back to
+        status_since, which is exactly the stale value the gate defends against.
+        `waiting` is never gated: a session waiting for a human isn't writing
+        the transcript by definition and must still surface.
+        """
+        if self.status != "busy":
+            return False
+        if not self.active_at:
+            return True
+        return (time.time() - self.active_at) < WORKING_ACTIVE_WINDOW
 
     @property
     def status_text(self) -> str:
+        # Keep the word coherent with the dot: a stale-busy row draws the hollow
+        # idle dot, so it must not read "working". It falls back to the idle
+        # text ("ready"); the left gutter already shows how long it has been
+        # inactive, so the age is not double-encoded here.
+        if self.status == "busy" and not self.working:
+            return STATUS_TEXT["idle"]
         return STATUS_TEXT.get(self.status, self.status)
 
     @property

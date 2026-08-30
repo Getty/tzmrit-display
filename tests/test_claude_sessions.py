@@ -8,6 +8,7 @@ import time
 import pytest
 
 from tzmrit_display.claude_sessions import (
+    WORKING_ACTIVE_WINDOW,
     Session,
     _fmt_age,
     _fmt_inactive,
@@ -83,11 +84,12 @@ class TestListSessions:
     def test_missing_directory_is_not_an_error(self, tmp_path):
         assert list_sessions(tmp_path / "does-not-exist") == []
 
-    def test_urgent_sessions_come_first(self, tmp_path):
+    @pytest.mark.parametrize("waiting_status", ["requires_action", "waiting"])
+    def test_urgent_sessions_come_first(self, tmp_path, waiting_status):
         pid = os.getpid()
         start = own_start_token()
         # All on the same live PID, only the status differs
-        for name, status in [("a", "idle"), ("b", "requires_action"), ("c", "busy")]:
+        for name, status in [("a", "idle"), ("b", waiting_status), ("c", "busy")]:
             data = {
                 "pid": pid, "name": name, "status": status, "cwd": "/x",
                 "kind": "interactive", "procStart": start,
@@ -95,23 +97,89 @@ class TestListSessions:
             }
             (tmp_path / f"{name}.json").write_text(json.dumps(data), encoding="utf-8")
         assert [s.status for s in list_sessions(tmp_path)] == [
-            "requires_action", "busy", "idle"]
+            waiting_status, "busy", "idle"]
 
 
 class TestSessionFields:
     def test_project_is_last_path_element(self):
         assert Session(1, "n", "/home/user/dev/karr/", "idle", "x").project == "karr"
 
-    def test_status_text_is_translated(self):
-        assert Session(1, "n", "/x", "requires_action", "y").status_text == "waiting for you"
+    # Both the current ("waiting", Claude Code >= 2.1.251) and the legacy
+    # ("requires_action") spellings map to the same waiting-for-human state.
+    @pytest.mark.parametrize("status", ["requires_action", "waiting"])
+    def test_status_text_is_translated(self, status):
+        assert Session(1, "n", "/x", status, "y").status_text == "waiting for you"
+
+    @pytest.mark.parametrize("status", ["requires_action", "waiting"])
+    def test_waiting_state_recognized(self, status):
+        assert Session(1, "n", "/x", status, "y").waiting
 
     def test_unknown_status_passes_through(self):
         assert Session(1, "n", "/x", "compiling", "y").status_text == "compiling"
 
     def test_waiting_and_working_flags(self):
         assert Session(1, "n", "/x", "requires_action", "y").waiting
+        # busy with no transcript clock trusts status -> working
         assert Session(1, "n", "/x", "busy", "y").working
         assert not Session(1, "n", "/x", "idle", "y").waiting
+
+
+class TestWorkingGate:
+    """A busy session only counts as *working* while its transcript (the real
+    LLM-activity clock) is fresh; stale busy is idle-in-disguise."""
+
+    def test_busy_with_recent_transcript_is_working(self):
+        # Preview: status=busy + inactive 3s -> filled dot
+        s = Session(1, "n", "/x", "busy", "i", active_at=time.time() - 3)
+        assert s.working
+
+    def test_busy_with_stale_transcript_is_not_working(self):
+        # The reproduced bug: status="busy" frozen ~18h ago while the transcript
+        # shows ~48m of inactivity. Preview: status=busy + inactive 48m -> hollow.
+        s = Session(1, "n", "/x", "busy", "i", active_at=time.time() - 48 * 60)
+        assert not s.working
+
+    def test_busy_without_transcript_trusts_status(self):
+        # No transcript file yet (just started): no reliable activity clock, so
+        # prefer trusting status over hiding fresh work. status_since is stale
+        # here on purpose - it must NOT be used to demote a clockless session.
+        s = Session(1, "n", "/x", "busy", "i",
+                    active_at=0.0, status_since=time.time() - 48 * 60)
+        assert s.working
+
+    def test_gate_boundary(self):
+        assert Session(1, "n", "/x", "busy", "i",
+                       active_at=time.time() - (WORKING_ACTIVE_WINDOW - 5)).working
+        assert not Session(1, "n", "/x", "busy", "i",
+                           active_at=time.time() - (WORKING_ACTIVE_WINDOW + 5)).working
+
+    @pytest.mark.parametrize("status", ["requires_action", "waiting"])
+    def test_waiting_is_not_gated_by_transcript(self, status):
+        # A session waiting for a human isn't writing the transcript by
+        # definition; it must still surface regardless of activity. The 120s
+        # working window only touches the busy branch.
+        s = Session(1, "n", "/x", status, "i", active_at=time.time() - 48 * 60)
+        assert s.waiting
+        assert not s.working
+
+    @pytest.mark.parametrize("status", ["requires_action", "waiting"])
+    def test_waiting_counts_in_summary(self, status):
+        assert "1 waiting" in summarize([Session(1, "a", "/x", status, "i")])
+
+    def test_stale_busy_status_text_matches_hollow_dot(self):
+        # Coherent with the dot: a stale-busy row reads "ready", not "working"
+        # (the gutter already shows the inactivity age).
+        stale = Session(1, "n", "/x", "busy", "i", active_at=time.time() - 48 * 60)
+        assert stale.status_text == "ready"
+        fresh = Session(1, "n", "/x", "busy", "i", active_at=time.time() - 3)
+        assert fresh.status_text == "working"
+
+    def test_stale_busy_drops_out_of_active_count(self):
+        sessions = [
+            Session(1, "a", "/x", "busy", "i", active_at=time.time() - 3),
+            Session(2, "b", "/y", "busy", "i", active_at=time.time() - 48 * 60),
+        ]
+        assert "1 active" in summarize(sessions)
 
 
 class TestFormatting:
