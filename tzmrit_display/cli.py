@@ -30,6 +30,39 @@ SPLIT_METRICS = ("cpu", "ram", "temp", "load", "disk", "net_down", "net_up")
 # and the Linux systemd unit already retries on the same order (RestartSec=5).
 RECONNECT_POLL = 3.0
 
+# How often to poll the account usage endpoint, chosen from how recently anyone
+# was active on the session board. Usage moves over hours, so a quiet board is
+# polled rarely; only a live turn warrants the fast cadence. These feed
+# get_limits(ttl) - the client itself stays ignorant of the session board.
+POLL_ACTIVE = 60.0    # a turn in the last minute: someone is working now
+POLL_RECENT = 180.0   # activity in the last few minutes, or a session waiting
+POLL_IDLE = 600.0     # board quiet: check about every ten minutes
+_RECENT_WINDOW = 300.0  # "the last few minutes" for POLL_RECENT (5 min)
+
+
+def usage_poll_interval(sessions) -> float:
+    """Desired usage-poll interval (seconds) for the current board state.
+
+    Pure and side-effect free so it can be unit-tested and reasoned about. The
+    signal is the smallest `inactive_seconds` across sessions - the
+    transcript-activity clock we already compute - with any waiting or working
+    session treated as live activity (a waiting session writes no transcript, so
+    its clock runs up even though a human is expected any moment).
+
+    < 60s since the last turn                      -> POLL_ACTIVE
+    < 5 min, or any session working/waiting        -> POLL_RECENT
+    otherwise (board quiet)                        -> POLL_IDLE
+    """
+    if not sessions:
+        return POLL_IDLE
+    min_inactive = min(s.inactive_seconds for s in sessions)
+    any_live = any(s.working or s.waiting for s in sessions)
+    if min_inactive < POLL_ACTIVE:
+        return POLL_ACTIVE
+    if min_inactive < _RECENT_WINDOW or any_live:
+        return POLL_RECENT
+    return POLL_IDLE
+
 
 def _compose(src, renderer, with_claude):
     """Build the image for the selected mode."""
@@ -44,7 +77,9 @@ def _compose(src, renderer, with_claude):
         if key not in chosen and len(chosen) < 4:
             chosen[key] = metric
     sessions = list_sessions()
-    limits = get_limits()  # cached, refreshed off-thread; None until it lands
+    # cached, refreshed off-thread; None until it lands. The TTL rides the board
+    # activity so a quiet board is polled far less than a busy one.
+    limits = get_limits(usage_poll_interval(sessions))
     return renderer.render_split(chosen, sessions, summarize(sessions),
                                  src.footer(), limits)
 

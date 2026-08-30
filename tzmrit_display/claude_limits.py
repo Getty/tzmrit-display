@@ -16,9 +16,13 @@ captured fixture, and `fetch()` is the only thing that touches the wire.
 
 Two hard rules, because this runs inside a ~1 fps render loop:
 
-  * The fetch never runs per frame. `get_limits()` returns the cached value
-    immediately and refreshes in a background thread at most once per TTL
-    (~60 s) -- roughly one request a minute, and never on the render thread.
+  * The fetch never runs per frame. `get_limits(ttl)` returns the cached value
+    immediately and refreshes in a background thread at most once per effective
+    interval, never on the render thread. The caller supplies the TTL from how
+    active the machine is (usage moves over hours, so a quiet board is polled
+    rarely); on top of that, a run of failed refreshes backs the interval off
+    exponentially (see `_backoff_interval`) so a persistent error cannot turn
+    into one request per TTL forever.
   * Everything fails silent. A missing or expired token, an offline host, a
     non-200, malformed JSON -- all return None. The panel keeps running and
     simply renders nothing here. We never refresh the OAuth token, and we
@@ -199,13 +203,33 @@ def fetch() -> Limits | None:
 # -- cached, off-thread access ------------------------------------------
 
 _TTL = 60.0
+# Exponential backoff after failed refreshes. The base doubles each consecutive
+# failure up to the cap, so a persistent error settles to one request per cap.
+_BACKOFF_BASE = 60.0     # first extra spacing after one failure
+_BACKOFF_CAP = 1800.0    # 30 min ceiling (n>=7 sits here)
 _lock = threading.Lock()
 _cache: dict[str, object] = {"at": 0.0, "value": None}
 _fetching = False
+_fail_count = 0          # consecutive refreshes that returned None
+
+
+def _backoff_interval(fail_count: int) -> float:
+    """Extra minimum spacing (seconds) after `fail_count` failed refreshes.
+
+    A failed refresh is any that yields None -- an offline host or malformed
+    JSON, but the dominant case is the persistent HTTP 429 the oauth/usage
+    endpoint has been returning (upstream bug anthropics/claude-code #30930).
+    Its `Retry-After: 0` is bogus, so we ignore it and impose our own schedule:
+    the interval doubles from the base each consecutive failure and is capped,
+    so a 429 storm settles to one request per cap rather than one per TTL.
+    """
+    if fail_count <= 0:
+        return 0.0
+    return min(_BACKOFF_CAP, _BACKOFF_BASE * (2 ** (fail_count - 1)))
 
 
 def _refresh() -> None:
-    global _fetching
+    global _fetching, _fail_count
     try:
         value = fetch()
     except Exception:
@@ -213,6 +237,10 @@ def _refresh() -> None:
     with _lock:
         _cache["at"] = time.monotonic()
         _cache["value"] = value
+        if value is None:
+            _fail_count += 1     # back off; the common cause is the 429 above
+        else:
+            _fail_count = 0      # a good fetch clears the backoff at once
         _fetching = False
 
 
@@ -220,16 +248,19 @@ def get_limits(ttl: float = _TTL) -> Limits | None:
     """Most recent limits, refreshing in the background. Never blocks.
 
     Returns the cached value at once (None until the first fetch lands). When
-    the cache is older than `ttl` and no fetch is already running, a daemon
-    thread is spawned to refresh it -- so the render loop is never held up by
-    the HTTP round-trip and the API sees at most one request per TTL.
+    the cache is older than the effective interval and no fetch is already
+    running, a daemon thread is spawned to refresh it -- so the render loop is
+    never held up by the HTTP round-trip. The effective interval is the larger
+    of the caller's `ttl` and the current failure backoff, so a run of errors
+    can only slow the polling, never speed it up.
     """
     now = time.monotonic()
     global _fetching
     spawn = False
     with _lock:
         value = _cache["value"]
-        if now - float(_cache["at"]) >= ttl and not _fetching:
+        effective = max(ttl, _backoff_interval(_fail_count))
+        if now - float(_cache["at"]) >= effective and not _fetching:
             _fetching = True
             spawn = True
     if spawn:

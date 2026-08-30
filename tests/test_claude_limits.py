@@ -173,6 +173,7 @@ class TestGetLimits:
         cl._cache["at"] = 0.0
         cl._cache["value"] = None
         cl._fetching = False
+        cl._fail_count = 0
 
     def test_background_refresh_populates_cache(self, monkeypatch):
         self._reset()
@@ -196,3 +197,74 @@ class TestGetLimits:
 
         monkeypatch.setattr(cl, "fetch", explode)
         assert get_limits(ttl=60.0) is sentinel
+
+
+class TestBackoff:
+    """A failed refresh (None: the persistent 429, offline, or malformed) backs
+    the polling off exponentially; the first success clears it."""
+
+    def _reset(self):
+        cl._cache["at"] = 0.0
+        cl._cache["value"] = None
+        cl._fetching = False
+        cl._fail_count = 0
+
+    def test_backoff_interval_schedule(self):
+        assert cl._backoff_interval(0) == 0.0
+        assert cl._backoff_interval(1) == cl._BACKOFF_BASE
+        assert cl._backoff_interval(2) == cl._BACKOFF_BASE * 2
+        assert cl._backoff_interval(3) == cl._BACKOFF_BASE * 4
+        assert cl._backoff_interval(4) == cl._BACKOFF_BASE * 8
+
+    def test_backoff_interval_caps(self):
+        # A long storm settles at the cap, not unbounded.
+        assert cl._backoff_interval(100) == cl._BACKOFF_CAP
+        assert cl._backoff_interval(1) <= cl._BACKOFF_CAP
+
+    def test_failed_refresh_increments_fail_count(self, monkeypatch):
+        self._reset()
+        monkeypatch.setattr(cl, "fetch", lambda: None)
+        cl._refresh()
+        assert cl._fail_count == 1
+        assert cl._cache["value"] is None
+        cl._refresh()
+        assert cl._fail_count == 2
+
+    def test_success_resets_fail_count(self, monkeypatch):
+        self._reset()
+        cl._fail_count = 5
+        sentinel = Limits(session=Limit("Session", 11))
+        monkeypatch.setattr(cl, "fetch", lambda: sentinel)
+        cl._refresh()
+        assert cl._fail_count == 0
+        assert cl._cache["value"] is sentinel
+
+    def test_backoff_suppresses_spawn_within_window(self, monkeypatch):
+        self._reset()
+        cl._fail_count = 4  # backoff = base * 8, far larger than the 60s ttl
+        cl._cache["at"] = time.monotonic() - 100.0  # only 100s since last try
+
+        calls = []
+        monkeypatch.setattr(cl, "fetch", lambda: calls.append(1))
+        get_limits(ttl=60.0)  # activity wants 60s, backoff says wait longer
+        time.sleep(0.05)
+        assert calls == []  # 100s < base*8 -> no refresh spawned
+
+    def test_backoff_allows_spawn_once_elapsed(self, monkeypatch):
+        self._reset()
+        cl._fail_count = 4
+        backoff = cl._backoff_interval(4)
+        cl._cache["at"] = time.monotonic() - (backoff + 10.0)  # past the window
+
+        done = []
+        monkeypatch.setattr(cl, "fetch", lambda: done.append(1) or None)
+        get_limits(ttl=60.0)
+        deadline = time.monotonic() + 2.0
+        while not done and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert done  # a refresh was spawned once the backoff window elapsed
+        # still failing -> the counter climbed rather than reset
+        deadline = time.monotonic() + 2.0
+        while cl._fetching and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert cl._fail_count == 5
