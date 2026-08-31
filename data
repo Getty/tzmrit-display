@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-08-30T23:26:18Z
+claimed_by: told-best
+class: standard
+completed: 2026-08-31T20:38:23Z
+created: 2026-08-30T23:26:03Z
+id: 5
+priority: high
+started: 2026-08-30T23:26:14Z
+status: done
+tags:
+- claude_limits
+- cli
+title: Adaptive usage-poll interval + 429/failure backoff for claude_limits
+updated: 2026-08-31T20:38:23Z
+---
+
+Usage endpoint returns persistent HTTP 429 (upstream anthropics/claude-code #30930). Stop hammering it and poll far less than the fixed 60s. Part 1: pure usage_poll_interval(sessions) in cli.py maps board activity -> ttl (60/180/600s), passed to get_limits(ttl) from _compose; claude_limits stays ignorant of claude_sessions. Part 2: consecutive-failure exponential backoff in claude_limits.py (_backoff_interval, base 60s doubling, cap 1800s), effective = max(ttl, backoff), reset on first success; bogus Retry-After:0 ignored; stays off-thread/fail-silent.
+
+2026-08-30 23:26 Done. Part 1: usage_poll_interval(sessions) pure helper in cli.py (POLL_ACTIVE=60, POLL_RECENT=180, POLL_IDLE=600). Signal = min inactive_seconds across sessions, with any working/waiting as a floor to POLL_RECENT. Wired via get_limits(usage_poll_interval(sessions)) in _compose; run priming call left as-is. Part 2: _backoff_interval(n) in claude_limits.py (base 60s, doubling, cap 1800s=30min at n>=6); _fail_count tracked in _refresh (None -> +1, success -> 0); get_limits uses effective = max(ttl, backoff). Retry-After:0 ignored; off-thread + fail-silent preserved. Verified: 163 tests pass (was 149); live interval 180s for current board; preview --claude renders 1920x462. Not verified: real endpoint (persistent 429) and hardware (no panel/no live 200 response here).
