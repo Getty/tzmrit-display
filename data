@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-08-31T22:08:24Z
+claimed_by: main-audit
+class: standard
+completed: 2026-08-31T22:08:24Z
+created: 2026-08-29T02:44:35Z
+id: 2
+priority: high
+started: 2026-08-31T22:01:23Z
+status: done
+tags:
+- linux
+- release
+- review
+title: 'Linux review: runtime/stop/reconnect + pre-release audit'
+updated: 2026-08-31T22:08:24Z
+---
+
+Windows-side work for the next release is pushed to main (6b334fc..4217d6d): installer autostart UI fix, provenance metadata (authors, exe version resources), reconnect-on-unplug loop, stop command + single-instance takeover (new tzmrit_display/runtime.py), app icon + TZMRIT Display display name.
+
+Please review the cross-platform pieces on Linux before we tag:
+1. tzmrit_display/runtime.py (new): runtime dir = XDG_RUNTIME_DIR -> XDG_STATE_HOME -> ~/.local/state. Sanity-check choice + permissions on a real session.
+2. Stop semantics vs systemd: stop/takeover exit rc 0 by design so Restart=on-failure does NOT restart a deliberately stopped instance. Verify against systemd/tzmrit-display.service; systemctl --user stop stays canonical.
+3. Reconnect loop in cli.py cmd_run: process now survives unplug itself (previously systemd rescued via Restart=on-failure). Check for interactions (double retry, journal noise).
+4. pytest on Linux - the /proc-only test that skips on Windows must RUN here; expect 78 executed.
+5. Ubuntu CI was red 2026-08-28 and blocked v0.1.0 - likely k1 (Node 20 actions). Check current main.
+6. Standard Linux release-chain audit (sdist/wheel incl. fonts + new packaging assets, systemd unit, udev rule).
+
+Release = git tag; maintainer go-ahead pending - do not tag.
