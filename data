@@ -1,0 +1,82 @@
+---
+claimed_at: 2026-08-29T18:53:47Z
+claimed_by: worker
+class: standard
+completed: 2026-08-31T20:38:11Z
+created: 2026-08-29T03:51:16Z
+id: 3
+priority: medium
+started: 2026-08-29T03:52:47Z
+status: done
+tags:
+- feature
+- claude
+- render
+title: Claude usage limits under the sessions panel
+updated: 2026-08-31T20:38:11Z
+---
+
+Show the account rate-limit budget (session + weekly) below the Claude sessions column in the --claude view.
+
+DATA SOURCE (verified live, HTTP 200):
+  GET https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1
+  Headers:
+    Authorization: Bearer <token>
+    anthropic-beta: oauth-2025-04-20
+  Token: ~/.claude/.credentials.json -> claudeAiOauth.accessToken
+         (siblings: refreshToken, expiresAt, subscriptionType, rateLimitTier)
+
+RESPONSE SHAPE (real sample):
+  five_hour.utilization = 13.0 (percent), five_hour.resets_at = ISO8601
+  seven_day.utilization = 37.0 (percent), seven_day.resets_at = ISO8601
+  limits: [ {kind:session|weekly_all|weekly_scoped, group, percent:int,
+            severity:normal|..., resets_at:ISO8601, is_active:bool,
+            scope:{model:{display_name}}|null} ]
+  Prefer the limits[] array; fall back to five_hour/seven_day.
+  session limit = 5h ; weekly limit = 7d (weekly_all).
+
+CONSTRAINTS:
+  - Render loop is ~1 fps: MUST NOT call the API per frame. Cache with a TTL
+    (~60s) and fetch off the render thread (see _mem_cache / TTL in
+    claude_sessions.py). ~1 request/min max.
+  - Fail silent: network error / 401 / missing token / offline -> return None,
+    panel keeps working, render nothing. Never crash the loop.
+  - Do not attempt OAuth refresh. If accessToken expired (expiresAt in past), skip.
+  - Gate on args.claude (only relevant in the sessions view).
+  - Never log or expose the token.
+  - Pure parse function (json dict -> dataclass) so tests use a captured fixture,
+    no network in tests. Add the real sample as tests/fixtures.
+
+RENDER: two compact rows under the sessions column, e.g.
+  "Session 13%  resets 1h20m" / "Weekly 37%  resets 2d". Match render.py style;
+  optionally tint by severity. Keep it small.
+
+Added tzmrit_display/claude_limits.py: pure parse_usage(dict)->Limits|None (prefers limits[] session/weekly_all, falls back to five_hour/seven_day), fetch() over urllib (stdlib, no new dep) reading ~/.claude/.credentials.json accessToken with expiresAt guard (no OAuth refresh), and get_limits() with a 60s TTL cache refreshed on a background daemon thread (never per-frame, never blocks render, fail-silent to None). Gated on args.claude in cli._compose. render.py: two compact rows ('Session 13% resets 1h20m' / 'Weekly 37% resets 2d') below the sessions column; kept accent color (not warn/crit) to respect the status-color-needs-a-marker invariant, so severity tint was intentionally skipped. Fixture tests/fixtures/usage.json + tests/test_claude_limits.py (28 cases, no network) + one split-render test. 111 passed. Preview --claude renders without crash (empty limits there, fail-silent). NOT verified: live data against the real API and on-hardware rendering (no panel, no network here); usage.json matches the documented response shape but was authored, not a byte capture. Did not commit/tag per instructions.
+
+Moved limits from the sessions column to the footer, per maintainer follow-up. render.py render_split(): (1) removed the right-column reservation, separator, and _limits call - sessions list regains full column height; (2) replaced _limits with _limit_bars: horizontal rounded-rect bars, INK_FAINT track, ACCENT fill = percent/100, label 'Session 14%'/'Weekly 37%' in INK inside the bar (legible over both filled and empty track). Two bars right-aligned in the footer's right portion. Coexistence: the WARN 'waiting' notice keeps the far-right and the bars shift left of it (bars_right computed from its width) - verified they never collide. Kept fill=ACCENT (not severity-tinted): a WARN/yellow fill would be too light under the INK label; the bar being a marker shape means tinting is now *allowed* but declined for label contrast. Dropped the 'resets ...' text for a clean footer. Tests: renamed the split-limits test and added a waiting+bars coexistence test; 112 passed. Previews (scale=2) under scratchpad: limits_footer.png and limits_footer_waiting.png. Not verified: real API data / on-hardware (no network, no panel). No commit/tag.
+
+Follow-up #2: limit bars now span the FULL right half. render.py _limit_bars(d, rows, x0, x1, y) draws two bars side by side across right_x..W-mx with an 18px gap (each ~half the right half), each a rounded-rect INK_FAINT track with ACCENT fill=percent/100 and, inside, the label 'Session 14%'/'Weekly 37%' (INK, f_small) plus the reset time on a second line (INK, f_foot_key) taken verbatim from Limit.reset_text(); bar is 52px tall to fit both lines, placed in the footer band below the rule without touching HOST/DISK/UPTIME on the left half. Sessions list keeps full height. Dropped the footer 'waiting' notice (and the now-unused waiting computation) as redundant - a waiting session already shows as the WARN triangle + 'waiting for you' in the list and in the CLAUDE header count; verified in the waiting preview. Fill stays ACCENT (severity decision unchanged; a WARN fill would be too light under the INK label). Tests: reworked the two limit-bar tests to build Limits with real resets_at datetimes and to cover a waiting session; 112 passed. Previews (scale=2) in scratchpad: limits_wide.png and limits_wide_waiting.png. Not verified: real-API data / on-hardware (no network, no panel). No commit/tag.
+
+Tweak: single-line bars. render.py _limit_bars now puts label+percent left-aligned (anchor lm at left pad) and reset time right-aligned (anchor rm at right pad) on ONE line, both INK f_small, vertically centered. Bar height shrunk 52px->30px (pill radius = h/2) as a clean single-line bar. Unchanged: two bars side by side spanning the full right half (right_x..W-mx, 18px gap), ACCENT fill=percent/100, sessions full height, no waiting notice. Both texts legible over filled and empty track. 112 passed. Preview (scale=2, session ~3h55m, weekly ~3d): scratchpad/limits_oneline.png. Not verified: real-API data / on-hardware (no network, no panel). No commit/tag.
+
+Black text in the limit bars (Option B). render.py: text color INK->SURFACE (#0B0D12, the theme's near-black; no raw (0,0,0)). To keep black legible across the WHOLE bar - which the old accent-vs-dark-track split broke - the entire bar is now an accent chip: remaining budget = a lighter accent (new _mix(ACCENT,INK,0.34) helper, derived from theme tokens), consumed fraction = base ACCENT from the left. Both tones are light-accent (ACCENT is 7.7:1 vs SURFACE per theme.py), so SURFACE text reads over both the consumed and remaining segments; the used fraction is a tone shift rather than an empty-vs-filled contrast. Chose B over A (light full-width chip + accent segment) because a near-white INK chip would render two big white blocks in the footer - the accent chip stays on-brand and the fill still means something (bar = marker shape). Layout unchanged: two bars, full right half, percent left / reset right on one single-line-height bar, sessions full height, no waiting notice. 112 passed. Preview (scale=2, session 2% ~4h, weekly 37% ~3d): scratchpad/limits_black.png. Not verified: real-API data / on-hardware. No commit/tag.
+
+Color tweak: limit bars now use the sparkline's two blues. Flipped the arrangement in render.py _limit_bars: CONSUMED (filled from left) = bright T.ACCENT (#58A6FF, the sparkline LINE color); REMAINING = the graph's dark FILL family. The sparkline fill is ACCENT@alpha46 over SURFACE = opaque _mix(SURFACE,ACCENT,0.18), but that only gives 1.32:1 vs SURFACE text, so it's lightened along the same SURFACE->ACCENT axis to t=0.75 => #4580C4 (reused _mix, no raw hex; text stays T.SURFACE). Measured contrast: SURFACE-on-ACCENT (consumed) = 7.69:1; SURFACE-on-remaining (#4580C4) = 4.75:1 (clears WCAG AA 4.5:1); remaining-vs-ACCENT separation 1.62:1 so the two blues still read as filled-vs-remaining, remaining clearly the darker one. Everything else unchanged: text SURFACE one line, percent left / reset right, two bars full right half, single-line height, sessions full height, no waiting notice. 112 passed. Preview (scale=2, session 2% ~4h so mostly the dark remaining blue, weekly 37% ~3d): scratchpad/limits_graphblue.png. Not verified: real-API data / on-hardware. No commit/tag.
+
+Session rows redesigned + inactivity counter + warm project-prefix tint; two layout trims; limits prime; warm theme token.
+
+claude_sessions.py: 'time since last LLM activity' from the transcript jsonl mtime. New PROJECTS_DIR; _transcript_mtime(session_id, ttl, projects) globs ~/.claude/projects/*/<sid>.jsonl and takes the newest mtime, TTL-cached (_active_cache, 2s) like _mem_cache; comment notes non-LLM writes (compaction) can nudge it. Session gains active_at + inactive_seconds (active_at, falling back to status_since) + inactive_text via new single-unit _fmt_inactive (Ns/Nm/Nh; boundaries 59s->1m, 59m->1h). list_sessions populates active_at.
+
+render.py _session_row: (1) NEW left gutter with inactive_text right-aligned (52px) so markers/names stay aligned; color via _inactive_color -> neutral INK_FAINT <5m, muted _STALE_WARN (=_mix(INK_DIM,WARN,0.55)) >=5m, muted _STALE_CRIT (=_mix(INK_DIM,CRIT,0.55)) >=1h - MUTED blends, not the pure reserved status colors (the numeric value is the non-color encoding). (2) name project-prefix tinted T.ACCENT_WARM, suffix normal; names not starting with the project draw whole/untinted. (3) sub-line = memory only (project dropped). (4) age_text removed; status word kept. Truncation still works against the reduced width (avail uses the shifted name_x). Waiting WARN triangle unchanged.
+
+theme.py: ACCENT_WARM=#E0985E (muted amber, complementary to ACCENT). Contrast on SURFACE 8.16:1; hue 26.8deg sits between CRIT 3.8 and WARN 44.4 (~18-23deg from each) so it never reads as a status color.
+
+cli.py cmd_run: get_limits() called once before the render loop (gated on args.claude) so the first fetch is in flight on (re)connect.
+
+Tests: +TestInactivity (format boundaries 59s/60s/59m/60m, active_at vs status_since fallback, transcript mtime by id/missing/empty) in test_claude_sessions; +TestInactivityColor (neutral<5m, muted-yellow>=5m, muted-red>=1h, blends != pure WARN/CRIT) in test_render. 131 passed.
+
+Preview (scale=2): scratchpad/sessions_inactivity.png - busy 2s + 33s (neutral), idle 6m (grau-gelb), idle 1h (grau-rot), each with memory; tinted prefixes on display-/karr-/p5-api-docker-; standalone-agent untinted.
+
+Not verified: real transcript-mtime behavior on a live busy session, real-API limits, on-hardware. No commit/tag.
+
+Bug fix: long derived session names lost their suffix and tint. render.py _session_row previously right-truncated the name FIRST, then tested name.startswith(project) - a name chopped shorter than the project string failed that test and drew whole in base color, dropping the unique suffix (maintainer's 'alles blau'). Extracted a pure _name_segments(d, name, project, avail) -> [(text, is_prefix)]: for a derived name it keeps the SUFFIX and puts the ellipsis INSIDE the prefix (p5-dist-zilla-plugin-docker-api-7d -> 'p5-dist-zilla-plug…-7d', prefix tinted ACCENT_WARM, '-7d' in base), shortening the prefix from its right but keeping >=2 chars; only if the suffix won't fit beside a minimal prefix does it fall back to whole-name right-truncation (also the path for non-derived names). _session_row now just draws the returned segments. NO color changes - base stays INK/INK_DIM as before. Tests: +TestNameSegments (short derived splits untruncated; long derived keeps real '-7d' suffix + truncated WARM prefix ending in ellipsis and fitting avail; non-derived single base segment; tiny budget falls back to whole-name truncation). 135 passed. Preview (scale=2, two-column so the column is narrow enough to trigger truncation): scratchpad/name_truncation.png shows 'p5-dist-zilla-plug…-7d' with the suffix intact. Not verified: on-hardware. No commit/tag.
