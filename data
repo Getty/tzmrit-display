@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-08-30T22:47:49Z
+claimed_by: told-best
+class: standard
+completed: 2026-08-31T20:38:17Z
+created: 2026-08-30T22:42:53Z
+id: 4
+priority: high
+started: 2026-08-30T22:46:02Z
+status: done
+tags:
+- claude_sessions
+- drift
+title: Session status 'waiting' not recognized (code checks 'requires_action')
+updated: 2026-08-31T20:38:17Z
+---
+
+Claude Code now writes status: "waiting" in ~/.claude/sessions/<pid>.json. tzmrit_display/claude_sessions.py only recognizes "requires_action": STATUS_ORDER, STATUS_TEXT and Session.waiting all key on "requires_action". Consequence on live data: a genuinely-waiting session (seen this session) gets waiting==False, is NOT sorted to the top, draws the hollow dot instead of the triangle, and reads "waiting" instead of "waiting for you". Distinct live status values observed: busy, idle, waiting (no requires_action at all). Fix: recognize "waiting" (likely alongside "requires_action" for back-compat) across STATUS_ORDER/STATUS_TEXT/Session.waiting. Found while implementing the busy->working transcript gate (k? this session); that change intentionally did not touch the waiting path.
+
+2026-08-30 22:47 Fixed. Introduced WAITING_STATUSES = frozenset({"requires_action","waiting"}) as single source of truth in claude_sessions.py; STATUS_ORDER and STATUS_TEXT now derive their waiting entries from it, and Session.waiting keys on the set. "waiting" (Claude Code >=2.1.251) and legacy "requires_action" behave identically: sort to top (urgency 0), draw the warning triangle via sess.waiting, count in summarize N-waiting, read "waiting for you". render.py keys off sess.waiting/sess.working so no render change needed. Verified live: p5-dist-zilla-plugin-docker-api-9d (status=waiting) sorts top, waiting=True, header "1 waiting". Ungated by the 120s working window. Only busy/idle/waiting seen live - no other new status. Tests: 149 pass (was 142). Not verified: on-hardware display (no panel here; PNG preview renders 1920x462).
