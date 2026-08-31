@@ -1,0 +1,18 @@
+---
+claimed_at: 2026-08-31T22:02:59Z
+claimed_by: main-ci
+class: standard
+completed: 2026-08-31T22:02:59Z
+created: 2026-08-28T21:56:05Z
+id: 1
+priority: low
+started: 2026-08-31T22:02:16Z
+status: done
+tags:
+- ci
+- maintenance
+title: Bump GitHub Actions off deprecated Node 20
+updated: 2026-08-31T22:02:59Z
+---
+
+CI warns that these actions target Node.js 20 (deprecated; forced onto Node 24 for now): actions/checkout@v4, actions/setup-python@v5, actions/upload-artifact@v4, softprops/action-gh-release@v2 in .github/workflows/ci.yml. Bump to versions that run on Node 24 natively. Non-blocking: the v0.1.0 run was fully green. Ref: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
