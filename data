@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-09-01T13:41:54Z
+claimed_by: opus-orchestrator
+class: standard
+completed: 2026-09-01T13:41:54Z
+created: 2026-09-01T13:33:46Z
+id: 9
+priority: high
+started: 2026-09-01T13:34:13Z
+status: done
+tags:
+- feature
+- http
+- cli
+title: Serve the exact dashboard frame over HTTP (run --http PORT + headless)
+updated: 2026-09-01T13:41:54Z
+---
+
+The --claude split is only visible on the physical panel. Expose the exact same rendered frame over HTTP so it can be viewed in a browser / from another machine.
+
+Decided scope (with the maintainer):
+- New flag on `run`: `--http PORT`. While driving the panel, ALSO serve over the port.
+- Headless: it must be possible to run the web dashboard WITHOUT a panel (pure web server). Add `--no-panel` (only meaningful together with `--http`): skip the Panel/reconnect machinery, just compose frames on --interval and serve them.
+- Content: `GET /` returns an HTML page showing the exact same rendered image that goes to the panel, auto-refreshing ~1/s by re-fetching `GET /frame.png` (cache-busted). `GET /frame.png` returns the latest composed frame as PNG (image/png, no-cache). Before the first frame: return 503.
+- The served frame MUST be byte-identical to what the panel shows (same _compose() output, same layout/scale). Single source of truth: one composed frame feeds both the panel and the buffer the server reads. Producer/consumer with a thread-safe latest-frame holder is the clean shape.
+- Server: stdlib only (http.server.ThreadingHTTPServer in a daemon thread) - NO new dependency, keeps the PyInstaller freeze untouched. Runs on Linux and Windows.
+- Bind host: `--http-host`, default 0.0.0.0 (the maintainer wants it reachable over the network). Log a one-line startup warning that system metrics + Claude session names/projects are exposed, and how to restrict (--http-host 127.0.0.1).
+- Graceful shutdown: the server thread must be torn down on the same stop-request / SIGINT path as the panel loop; run must still exit rc 0.
+
+Tests (no hardware): FrameServer serves / (200, HTML referencing /frame.png) and /frame.png (200, image/png, PNG magic) once a frame is set; 503 before any frame; --no-panel composes at least one frame into the buffer without a Panel; CLI parsing of --http/--http-host/--no-panel incl. --no-panel requiring --http.
+
+Docs (non-behavioral, orchestrator handles after): README + docs/windows.md note the flag and the exposure warning.
