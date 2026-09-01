@@ -1,0 +1,23 @@
+---
+claimed_at: 2026-09-01T05:00:43Z
+claimed_by: opus-orchestrator
+class: standard
+completed: 2026-09-01T05:00:43Z
+created: 2026-08-31T22:08:28Z
+id: 6
+priority: high
+started: 2026-09-01T04:16:22Z
+status: done
+tags:
+- packaging
+- release
+- bug
+title: 'Wheel omits fonts/ — non-editable install crashes (OSError: cannot open resource)'
+updated: 2026-09-01T05:00:43Z
+---
+
+Found in the karr #2 Linux pre-release audit. theme.py:20 `FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"` resolves to `site-packages/fonts` in a wheel, but pyproject has no package-data and fonts/ sits at the repo ROOT as a sibling of the package, so the wheel never ships the fonts. `pip install -e .` (the documented path) works only by accident of path resolution; `pip install .` or any wheel install crashes at theme.font() -> PIL.ImageFont.truetype() with `OSError: cannot open resource`. Reproduced by building the wheel and installing into a scratch venv. Pre-existing since the first commit (9297d6f), NOT a regression from the recent claude_limits/waiting/adaptive-polling work.
+
+Fix direction: relocate fonts into `tzmrit_display/fonts/` (or add a [tool.setuptools.package-data] mapping) + update FONT_DIR + include-package-data so both wheel and sdist ship them. IMPORTANT cross-platform hazard: moving fonts affects the Windows PyInstaller frozen-fonts datas mapping (packaging skill, mapped against theme.py) — needs a Windows-side re-check after the move. Minor: the `build` package is missing from the [dev] extras (had to build via uvx).
+
+Fonts relocated to tzmrit_display/fonts/; wheel+sdist ship them (crash reproduced then verified); pyproject package-data + build>=1.0 in [dev]; spec datas mapping updated. Windows chain re-audited: no blocker, frozen geometry verified end-to-end. pytest 164 passed. Follow-up doc drift filed as #8.
