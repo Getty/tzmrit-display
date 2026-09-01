@@ -1,0 +1,35 @@
+---
+claimed_at: 2026-09-01T05:00:52Z
+claimed_by: opus-orchestrator
+class: standard
+completed: 2026-09-01T05:00:52Z
+created: 2026-09-01T04:23:01Z
+id: 8
+priority: low
+started: 2026-09-01T04:23:59Z
+status: done
+tags:
+- packaging
+- docs
+- windows
+title: 'Stale font-path doc/skill text after karr #6 relocation'
+updated: 2026-09-01T05:00:52Z
+---
+
+karr #6 moved fonts/ -> tzmrit_display/fonts/ and changed theme.py FONT_DIR to Path(__file__).resolve().parent / "fonts" (single-parent), plus updated packaging/tzmrit-display.spec datas to ("../tzmrit_display/fonts","tzmrit_display/fonts"). Windows-release-audit of that change (this ticket) found the functional chain (spec/pyproject/theme.py/docs/windows.md/README.md) all correctly updated and consistent -- NO functional blocker. But three doc/skill locations still describe the OLD layout and will mislead future audits:
+
+1. .claude/agents/tzmrit-display-release-windows.md lines 25-27 (the "Frozen-fonts coupling" checklist item) still says:
+   datas=[("../fonts","fonts")] ... parent.parent/"fonts"
+   Should read something like:
+   datas=[("../tzmrit_display/fonts","tzmrit_display/fonts")] still matches how theme.py resolves fonts (Path(__file__).resolve().parent/"fonts", landing in _internal/tzmrit_display/fonts).
+
+2. .claude/skills/tzmrit-display-packaging/SKILL.md lines 79-83 (Windows pipeline, "Frozen fonts coupling" bullet) still says:
+   datas=[("../fonts","fonts")] lands the fonts in _internal/fonts, mirroring the checkouts parent.parent/"fonts" layout
+   Should read:
+   datas=[("../tzmrit_display/fonts","tzmrit_display/fonts")] lands the fonts in _internal/tzmrit_display/fonts, mirroring the checkouts package-relative parent/"fonts" layout.
+
+3. Same file, line 63 (Linux pipeline, sdist/wheel bullet) -- out of the Windows lane but same root cause -- still says "Must carry the fonts/ (theme.py loads them at runtime)" referring to the old repo-root fonts/ directory; should say tzmrit_display/fonts/ and mention [tool.setuptools.package-data]. Flag to tzmrit-display-release-linux/checker as well.
+
+Non-blocking for a Windows release; file for the worker to correct on next doc pass.
+
+Corrected stale font-path text: .claude/agents/tzmrit-display-release-windows.md (frozen-fonts coupling item), .claude/skills/tzmrit-display-packaging/SKILL.md Windows bullet + Linux sdist/wheel bullet — all now reference tzmrit_display/fonts / _internal/tzmrit_display/fonts / package-data. Files verified not hardlinked (1 link each), no cross-repo propagation. Doc-only, no tests.
