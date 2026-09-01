@@ -22,9 +22,11 @@ read the files for drift.
 
 Check, in order:
 
-1. **Frozen-fonts coupling** — `packaging/tzmrit-display.spec` `datas=[("../fonts","fonts")]`
-   still matches how `theme.py` resolves fonts (`parent.parent/"fonts"`). A mismatch =
-   fonts present in dev, black screen in the installed app.
+1. **Frozen-fonts coupling** — `packaging/tzmrit-display.spec`
+   `datas=[("../tzmrit_display/fonts","tzmrit_display/fonts")]` still matches how
+   `theme.py` resolves fonts (`Path(__file__).resolve().parent/"fonts"`, landing in
+   `_internal/tzmrit_display/fonts`). A mismatch = fonts present in dev, black screen
+   in the installed app.
 2. **Two-exe split intact** — `tzmrit-display.exe` (console) + `tzmrit-displayw.exe`
    (windowed) both built; shortcuts/autostart target the windowed one.
 3. **hiddenimports** — any new dynamic import a dependency introduced is covered

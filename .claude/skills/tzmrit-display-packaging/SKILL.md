@@ -60,8 +60,9 @@ Source install + optional system integration; there is no distro package.
 - **`systemd/99-hongtai-panel.rules`** — udev fallback for `dialout` not being
   enough. **Must list every supported product id** (`7791` and `7792` today);
   a new panel id added to the code without a matching rule line is a gap.
-- **sdist/wheel** — `python -m build`. Must carry the `fonts/` (theme.py loads them
-  at runtime) and the package data; `[tool.setuptools] packages = ["tzmrit_display"]`.
+- **sdist/wheel** — `python -m build`. Must carry `tzmrit_display/fonts/` (theme.py
+  loads them at runtime) via `[tool.setuptools.package-data]`;
+  `[tool.setuptools] packages = ["tzmrit_display"]`.
 
 Audit points: unit paths still valid, udev ids match the code's supported set,
 `dialout`/access story in README current, `python -m build` clean with fonts present,
@@ -76,11 +77,12 @@ Frozen app + NSIS installer; no Python needed on the target.
   `console=False`, what autostart/shortcuts run). Entry point `packaging/launcher.py`
   (= the `tzmrit_display.cli:main` console script). `excludes=["tkinter"]`,
   `hiddenimports=[]`.
-- **Frozen fonts coupling** — `datas=[("../fonts","fonts")]` lands the fonts in
-  `_internal/fonts`, mirroring the checkout's `parent.parent/"fonts"` layout so
-  `theme.py` needs no frozen-vs-source branch. **If theme.py's font path resolution
-  changes, this `datas` mapping must change with it** — the classic freeze break is
-  fonts present in dev, missing (black screen) in the installed app.
+- **Frozen fonts coupling** — `datas=[("../tzmrit_display/fonts","tzmrit_display/fonts")]`
+  lands the fonts in `_internal/tzmrit_display/fonts`, mirroring the checkout's
+  package-relative `parent/"fonts"` layout so `theme.py` needs no frozen-vs-source
+  branch. **If theme.py's font path resolution changes, this `datas` mapping must
+  change with it** — the classic freeze break is fonts present in dev, missing
+  (black screen) in the installed app.
 - **`packaging/build.bat`** — the whole Windows build: venv, `pip install -e . pyinstaller`,
   read version, `pyinstaller --noconfirm --clean tzmrit-display.spec`, then
   `makensis /DVERSION=... installer.nsi`. Needs NSIS (`winget install NSIS.NSIS`).
