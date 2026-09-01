@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-09-01T05:00:47Z
+claimed_by: opus-orchestrator
+class: standard
+completed: 2026-09-01T05:00:47Z
+created: 2026-08-31T22:08:32Z
+id: 7
+priority: low
+started: 2026-09-01T04:16:26Z
+status: done
+tags:
+- hardening
+title: runtime_dir mkdir inherits umask — chmod 0o700 in fallback branches
+updated: 2026-09-01T05:00:47Z
+---
+
+Found in the karr #2 audit. runtime.py:56 `path.mkdir(parents=True, exist_ok=True)` takes no explicit mode, so the runtime dir inherits the umask (came out 0o775 here). On the primary XDG_RUNTIME_DIR path this is harmless (/run/user/1000 is 0700, blocks traversal). But in the XDG_STATE_HOME / ~/.local/state fallback branches the parent has no such guarantee, leaving run.pid/stop-request group/world-readable. Low severity — both files hold only a bare PID, no secret, and 0o775 still blocks other-user writes. Fix: `path.chmod(0o700)` after mkdir.
+
+2026-09-01 04:18 chmod 0o700 after mkdir in runtime_dir(), POSIX-guarded (os.name != nt); regression test in test_stop_takeover.py exercises the real runtime_dir() on the XDG_STATE_HOME fallback and asserts 0o700. Full suite 164 passed.
