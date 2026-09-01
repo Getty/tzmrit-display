@@ -78,6 +78,13 @@ integer falls back to the weak check (process exists and looks like Claude).
   because the frozen layout mirrors the checkout layout
   (`_internal\tzmrit_display\fonts`).
 
+`run --http PORT` serves the same rendered frame over HTTP (open
+`http://<host>:PORT/`, or fetch `/frame.png`); `--no-panel` makes it a headless
+web dashboard with no device attached. It uses only the stdlib `http.server`, so
+the frozen build gains no dependency and it should behave the same as on Linux —
+but this has not been exercised on a Windows machine here. The default bind is
+`0.0.0.0`; use `--http-host 127.0.0.1` to keep it local.
+
 Worth one look on a new panel model: the image orientation. The rotation is
 derived from the device's own `angle` field (`to_wire()`), same code path as
 on Linux — but angle=90 hardware has never been seen.

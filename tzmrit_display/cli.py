@@ -17,6 +17,7 @@ from .claude_sessions import list_sessions, summarize
 from .panel import Panel, PanelError, find_port
 from .render import DashboardRenderer
 from .sources import SystemSource
+from .webserver import FrameServer
 
 log = logging.getLogger("tzmrit_display")
 
@@ -82,6 +83,33 @@ def _compose(src, renderer, with_claude):
     limits = get_limits(usage_poll_interval(sessions))
     return renderer.render_split(chosen, sessions, summarize(sessions),
                                  src.footer(), limits)
+
+
+def _run_headless(src, renderer, args, server, stop_requested, wait) -> int:
+    """Fully headless run: compose frames on --interval, serve them, no panel.
+
+    Touches none of the Panel/reconnect/instance machinery - there is no panel
+    to drive or hand over. It shares the loop's compose step (so the served
+    frame is the same image the panel path would show) and the same
+    signal/stop-request handling for a clean rc-0 exit.
+    """
+    log.info("headless mode: composing frames for HTTP only, no panel")
+    # Prime the history so the sparklines don't grow out of nothing, matching
+    # the panel path.
+    for _ in range(3):
+        src.sample()
+        time.sleep(0.2)
+    if args.claude:
+        get_limits()
+    frames = 0
+    while not stop_requested():
+        began = time.monotonic()
+        img = _compose(src, renderer, args.claude)
+        server.set_frame(img)
+        frames += 1
+        wait(max(0.0, args.interval - (time.monotonic() - began)))
+    log.info("stopped after %d frames", frames)
+    return 0
 
 
 def cmd_info(args) -> int:
@@ -183,6 +211,10 @@ def cmd_run(args) -> int:
     honoring it is identical to Ctrl+C, and the clean rc 0 keeps systemd's
     Restart=on-failure from restarting a deliberately stopped instance.
     """
+    if args.no_panel and args.http is None:
+        print("--no-panel requires --http PORT", file=sys.stderr)
+        return 1
+
     src = SystemSource()
     renderer = DashboardRenderer(scale=args.scale)
     stop = False
@@ -207,6 +239,23 @@ def cmd_run(args) -> int:
         deadline = time.monotonic() + seconds
         while not stop_requested() and time.monotonic() < deadline:
             time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+
+    server = None
+    if args.http is not None:
+        server = FrameServer(args.http_host, args.http)
+        server.start()
+        log.warning("HTTP dashboard on http://%s:%d - this exposes your system "
+                    "metrics and Claude session names/projects to anyone who "
+                    "can reach that address; restrict it with "
+                    "--http-host 127.0.0.1", args.http_host, server.port)
+
+    # Fully headless: no panel to drive or hand over, so skip the reconnect and
+    # instance machinery entirely and just compose frames for the web buffer.
+    if args.no_panel:
+        try:
+            return _run_headless(src, renderer, args, server, stop_requested, wait)
+        finally:
+            server.stop()
 
     # Take over from an already running dashboard (e.g. the other Start menu
     # variant): ask it to exit and give it a bounded window to let go of the
@@ -252,7 +301,10 @@ def cmd_run(args) -> int:
                     frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
                     while not stop_requested():
                         began = time.monotonic()
-                        size = p.show(_compose(src, renderer, args.claude))
+                        img = _compose(src, renderer, args.claude)
+                        size = p.show(img)
+                        if server is not None:
+                            server.set_frame(img)
                         frames += 1
                         total_frames += 1
                         if time.monotonic() - last_log > 60:
@@ -279,11 +331,13 @@ def cmd_run(args) -> int:
                         break
     finally:
         runtime.release_instance()
+        if server is not None:
+            server.stop()
     log.info("stopped after %d frames", total_frames)
     return 0
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="tzmrit-display", description="Drive a HONGTAI USB LCD")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -295,6 +349,13 @@ def main(argv=None) -> int:
     p_run.add_argument("--blank-on-exit", action="store_true", help="clear the panel on exit")
     p_run.add_argument("--claude", action="store_true",
                        help="split layout: system metrics left, running Claude sessions right")
+    p_run.add_argument("--http", type=int, default=None, metavar="PORT",
+                       help="also serve the exact rendered frame over HTTP on PORT")
+    p_run.add_argument("--http-host", default="0.0.0.0", metavar="HOST",
+                       help="bind address for --http (default 0.0.0.0; use "
+                            "127.0.0.1 to keep it on this machine)")
+    p_run.add_argument("--no-panel", action="store_true",
+                       help="headless: serve over --http only, no panel (requires --http)")
     p_run.set_defaults(func=cmd_run)
 
     p_stop = sub.add_parser(
@@ -324,7 +385,11 @@ def main(argv=None) -> int:
     p_br.set_defaults(func=cmd_brightness)
 
     sub.add_parser("info", help="device information").set_defaults(func=cmd_info)
+    return ap
 
+
+def main(argv=None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

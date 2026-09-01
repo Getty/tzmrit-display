@@ -121,6 +121,7 @@ verified-hardware notes: [docs/windows.md](docs/windows.md).
 ```bash
 tzmrit-display run --claude       # system metrics + Claude sessions
 tzmrit-display run                # metrics only, six columns instead of four
+tzmrit-display run --claude --http 8080   # also serve the same frame at :8080
 tzmrit-display stop               # ask a running dashboard to exit cleanly
 tzmrit-display info               # what the device says about itself
 tzmrit-display preview -o out.png # render the layout without using the panel
@@ -132,6 +133,26 @@ tzmrit-display clear              # clear the panel
 `preview` is the fast path for layout work: it needs no hardware and does not
 hold the port, so you can iterate on the design while the monitor keeps running.
 `--claude` works there too.
+
+## View it in a browser (`--http`)
+
+`run --http PORT` serves the **exact same rendered frame** that goes to the panel
+over HTTP: open `http://<host>:PORT/` for a page that refreshes ~1×/s, or fetch
+`/frame.png` for the current frame. It runs alongside the panel, so you can watch
+the dashboard from another machine.
+
+```bash
+tzmrit-display run --claude --http 8080              # panel + web on :8080
+tzmrit-display run --claude --http 8080 --no-panel   # web only, no panel needed
+```
+
+`--no-panel` is the headless web dashboard — it composes and serves frames with
+no device attached (it requires `--http`).
+
+> **Exposure:** the default bind is `0.0.0.0`, so the page is reachable from any
+> machine that can reach the port, and it shows your system metrics and Claude
+> session names/projects. Restrict it to this machine with
+> `--http-host 127.0.0.1`.
 
 ## Running it permanently
 
