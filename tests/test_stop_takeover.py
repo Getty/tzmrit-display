@@ -12,7 +12,9 @@ its files) once it sees a stop request addressed to it.
 
 import os
 import signal
+import stat
 
+import pytest
 from test_reconnect import FakeSerial, _image_frames, _is_image, _patch_env
 
 import tzmrit_display.panel as panel
@@ -129,6 +131,32 @@ def test_stale_pid_file_is_tolerated(monkeypatch, tmp_path):
     assert requests == [], "stop was requested from a dead instance"
     assert len(_image_frames(serials[0].writes)) >= 1
     assert not (tmp_path / runtime.PID_FILE).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_runtime_dir_is_owner_only_on_state_fallback(monkeypatch, tmp_path):
+    """The ~/.local/state fallback has no 0700 parent like XDG_RUNTIME_DIR
+    does, so runtime_dir must not leave run.pid/stop-request group- or
+    world-readable, whatever the umask was when the dir got created."""
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    old = os.umask(0o022)  # what left the dir 0o755 before the fix
+    try:
+        path = runtime.runtime_dir()
+    finally:
+        os.umask(old)
+
+    assert path == tmp_path / "tzmrit-display"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+    # self-healing: a dir a looser run already created gets re-tightened
+    os.umask(0o000)
+    try:
+        path.chmod(0o777)
+        path = runtime.runtime_dir()
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
 
 
 def test_stop_with_no_instance(monkeypatch, tmp_path, capsys):

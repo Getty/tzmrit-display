@@ -54,6 +54,14 @@ def runtime_dir() -> Path:
                     or Path.home() / ".local" / "state")
     path = base / "tzmrit-display"
     path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        # mkdir honors the umask, which on the XDG_STATE_HOME / ~/.local/state
+        # fallback can leave run.pid/stop-request group- or world-readable (the
+        # primary XDG_RUNTIME_DIR is already 0700, but the fallbacks carry no
+        # such guarantee). Tighten unconditionally - self-healing over a dir a
+        # looser-umask run left behind - and skip on Windows, where chmod only
+        # toggles the read-only bit and 0o700 would be a misleading no-op.
+        path.chmod(0o700)
     return path
 
 
