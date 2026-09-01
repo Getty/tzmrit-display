@@ -235,4 +235,5 @@ docs/protocol.md      the protocol as measured against the device
 MIT — see [LICENSE](LICENSE).
 
 Bundled fonts keep their own licenses: Roboto (Apache 2.0) in
-`fonts/roboto/LICENSE.txt`, JetBrains Mono (OFL) in `fonts/jetbrains-mono/OFL.txt`.
+`tzmrit_display/fonts/roboto/LICENSE.txt`, JetBrains Mono (OFL) in
+`tzmrit_display/fonts/jetbrains-mono/OFL.txt`.

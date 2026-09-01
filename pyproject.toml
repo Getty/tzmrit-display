@@ -18,7 +18,7 @@ Issues = "https://github.com/Getty/tzmrit-display/issues"
 tzmrit-display = "tzmrit_display.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "build>=1.0"]
 
 [build-system]
 requires = ["setuptools>=77", "setuptools-scm>=8"]
@@ -26,6 +26,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["tzmrit_display"]
+
+# The bundled fonts live inside the package (tzmrit_display/fonts/) so they ship
+# in both the wheel and the sdist; theme.py resolves them relative to itself.
+[tool.setuptools.package-data]
+tzmrit_display = ["fonts/**/*.ttf", "fonts/roboto/LICENSE.txt", "fonts/jetbrains-mono/OFL.txt"]
 
 # The version has no home in the repo - it is derived from the git tag
 # (v0.2.0 -> 0.2.0; between releases: 0.2.1.dev3+g<hash>). Releasing is

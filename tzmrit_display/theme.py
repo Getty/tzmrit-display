@@ -17,7 +17,7 @@ They never appear alone, always alongside a marker shape.
 
 from pathlib import Path
 
-FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 # -- Colors --------------------------------------------------------------
 SURFACE = "#0B0D12"

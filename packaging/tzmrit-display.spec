@@ -5,9 +5,9 @@
 #   tzmrit-displayw.exe   windowed - same CLI, no console window; this is what
 #                                   the autostart shortcut runs
 #
-# The fonts land in _internal/fonts because theme.py resolves them relative
-# to the package (parent.parent / "fonts") - the frozen layout mirrors the
-# checkout layout, so no code change is needed.
+# The fonts land in _internal/tzmrit_display/fonts because theme.py resolves
+# them relative to the package (parent / "fonts") - the frozen layout mirrors
+# the checkout layout, so no code change is needed.
 #
 # The Windows version resource is built here rather than passed in because
 # build.bat runs pyinstaller BEFORE it extracts the version for NSIS - so the
@@ -65,7 +65,7 @@ def _versioninfo(description):
 a = Analysis(
     ["launcher.py"],
     pathex=[".."],
-    datas=[("../fonts", "fonts")],
+    datas=[("../tzmrit_display/fonts", "tzmrit_display/fonts")],
     hiddenimports=[],
     excludes=["tkinter"],
     noarchive=False,

@@ -33,8 +33,9 @@ Three ways, pick one:
    .venv\Scripts\tzmrit-display info
    ```
 
-   The install must be editable (`-e`): the fonts are resolved relative to the
-   package and are not copied into site-packages.
+   The fonts ship inside the package (`tzmrit_display/fonts/`), so a regular
+   `pip install .` works too; `-e` is used here only so a live checkout picks
+   up edits.
 
 If the port is busy, the vendor application is probably still running — it
 holds the COM port exclusively.
@@ -74,7 +75,8 @@ integer falls back to the weak check (process exists and looks like Claude).
   including status and memory (child processes — MCP servers — included).
 * Continuous `run`: 1.01 fps sustained, ~70 KB per frame.
 * The PyInstaller build (`packaging\tzmrit-display.spec`) finds the fonts
-  because the frozen layout mirrors the checkout layout (`_internal\fonts`).
+  because the frozen layout mirrors the checkout layout
+  (`_internal\tzmrit_display\fonts`).
 
 Worth one look on a new panel model: the image orientation. The rotation is
 derived from the device's own `angle` field (`to_wire()`), same code path as
