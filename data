@@ -1,0 +1,29 @@
+---
+class: standard
+created: 2026-09-01T13:34:03Z
+id: 10
+priority: medium
+status: backlog
+tags:
+- feature
+- claude
+- render
+- investigation
+title: 'Display: subagents inside a session are invisible (data gap)'
+updated: 2026-09-04T23:12:27Z
+---
+
+From an on-machine analysis (2026-09-01). The --claude split shows one row per Claude Code session read from ~/.claude/sessions/<pid>.json. Subagents/forks running inside a session do not surface at all, so a 5-worker fan-out shows as a single "working" session - the parallelism is invisible. This is the maintainer's "da fehlt was" feeling.
+
+Findings:
+- Session JSON has NO subagent/task info (fixed keys: pid/status/name/cwd/messagingSocketPath/... ). Confirmed against live files. Docstring claude_sessions.py:7-11 already states subagents "do not surface externally".
+- Subagents are in-process, NOT OS child processes, so process_memory()/psutil.children() (which do count MCP servers) never see them. child_count is computed but not even rendered today.
+- The only live signal is the transcript jsonl (~/.claude/projects/<cwd>/<sessionId>.jsonl): subagent turns carry "isSidechain":true and the spawning Task tool_use names the subagent_type. Currently all false on this machine (no fan-out running).
+
+Feasibility:
+- Via the session file: impossible, the data is not there.
+- Via transcript tailing: possible but fragile - undocumented internal format, no clean "subagent finished" marker (must pair Task tool_use with its tool_result), and parsing a growing jsonl every frame fights the lean render loop. Doable as best-effort with a TTL cache + only counting isSidechain activity within the last N seconds -> "N agents" on the session row.
+
+Not started - needs a design decision before any code. Kept separate from the render loop hazards. Do NOT start without maintainer go-ahead on approach.
+
+Drift correction (2026-09-05, verified on this machine while implementing k11): the finding above that subagent turns carry "isSidechain":true *inside* the main <sessionId>.jsonl is no longer how current Claude Code writes them. Grep over ~/.claude/projects: 155311 occurrences of "isSidechain":true, ALL of them in <project>/<sessionId>/subagents/agent-<id>.jsonl - zero in any top-level <sessionId>.jsonl. So the per-session glob "*/<sessionId>.jsonl" never sees a subagent line at all today, and the sidechain signal now lives in a sibling directory whose file count is itself the agent count. That makes the feature cheaper than the note above assumes (count/stat files in <sessionId>/subagents/ instead of parsing a growing jsonl), but it also means the format moved once already - still needs a maintainer decision before any code.
