@@ -44,12 +44,26 @@ jobs:
         with:
           python-version: "3.13"
 
+      # NSIS is no longer preinstalled on the runner image, so it is fetched
+      # here. Chocolatey answers 504 often enough to have broken a build, and
+      # it reports success when it installed nothing at all - hence the retry
+      # and the check that the executable actually exists. Without that check
+      # the failure surfaces four minutes later, inside build.bat, as a
+      # missing-NSIS message that reads like a local setup mistake.
       - name: Ensure NSIS
         shell: pwsh
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          foreach ($attempt in 1..3) {
+            if (Test-Path $makensis) { break }
+            if ($attempt -gt 1) { Start-Sleep -Seconds (15 * $attempt) }
+            Write-Host "Installing NSIS (attempt $attempt)"
             choco install nsis -y --no-progress
           }
+          if (-not (Test-Path $makensis)) {
+            throw "NSIS still missing at $makensis after three attempts"
+          }
+          & $makensis /VERSION
 
       - name: Build installer
         shell: cmd
