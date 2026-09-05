@@ -35,7 +35,7 @@ import json
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,8 +44,16 @@ USAGE_URL = "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1"
 _BETA = "oauth-2025-04-20"
 
 # The session window is 5 hours, the weekly (all models) window is 7 days.
+# `weekly_scoped` is a third, model-scoped weekly window the account may carry
+# (one per scoped model, so there can be more than one).
 _SESSION_KIND = "session"
 _WEEKLY_KIND = "weekly_all"
+_SCOPED_KIND = "weekly_scoped"
+
+# Every window on this panel is a Claude window and the neighbouring bars read
+# "Session" / "Weekly", so the vendor word in a scope display name ("Claude
+# Opus") is the one part of the label carrying no information.
+_VENDOR_PREFIX = "Claude "
 
 
 @dataclass
@@ -69,10 +77,17 @@ class Limit:
 class Limits:
     session: Limit | None = None
     weekly: Limit | None = None
+    scoped: list[Limit] = field(default_factory=list)
 
     @property
     def rows(self) -> list[Limit]:
-        return [x for x in (self.session, self.weekly) if x is not None]
+        """The bars to draw, widest window last: session, weekly, then scoped.
+
+        The order is the reading order on the panel and is deliberate - the
+        5h window is the one that bites first, the model-scoped weeklies are
+        the specialisation, so they close the row.
+        """
+        return [x for x in (self.session, self.weekly) if x is not None] + list(self.scoped)
 
 
 # -- parsing (pure) ------------------------------------------------------
@@ -81,19 +96,22 @@ def parse_usage(data: object) -> Limits | None:
     """Turn a usage response into Limits, or None if nothing is usable.
 
     Prefers the typed `limits[]` array; falls back to the flat
-    `five_hour`/`seven_day` buckets for either window independently.
+    `five_hour`/`seven_day` buckets for either window independently. The
+    model-scoped weeklies come only from the array - the flat buckets have no
+    equivalent - and there may be none, one or several of them.
     """
     if not isinstance(data, dict):
         return None
     session = _from_limits(data, _SESSION_KIND) or _from_bucket(data.get("five_hour"))
     weekly = _from_limits(data, _WEEKLY_KIND) or _from_bucket(data.get("seven_day"))
+    scoped = _scoped_limits(data)
     if session is not None:
         session.label = "Session"
     if weekly is not None:
         weekly.label = "Weekly"
-    if session is None and weekly is None:
+    if session is None and weekly is None and not scoped:
         return None
-    return Limits(session=session, weekly=weekly)
+    return Limits(session=session, weekly=weekly, scoped=scoped)
 
 
 def _from_limits(data: dict, kind: str) -> Limit | None:
@@ -110,6 +128,49 @@ def _from_limits(data: dict, kind: str) -> Limit | None:
             resets_at=_parse_iso(item.get("resets_at")),
         )
     return None
+
+
+def _scoped_limits(data: dict) -> list[Limit]:
+    """Every model-scoped weekly window in the payload, in payload order."""
+    limits = data.get("limits")
+    if not isinstance(limits, list):
+        return []
+    return [
+        Limit(
+            label=_scope_label(item),
+            percent=_as_percent(item.get("percent")),
+            severity=str(item.get("severity") or "normal"),
+            resets_at=_parse_iso(item.get("resets_at")),
+        )
+        for item in limits
+        if isinstance(item, dict) and item.get("kind") == _SCOPED_KIND
+    ]
+
+
+def _scope_label(item: dict) -> str:
+    """Bar label for a model-scoped window, read off the payload.
+
+    Never a hardcoded model name: which model an account's weekly is scoped to
+    moves with the plan (it was Opus, it is Fable here), so the name comes from
+    `scope.model.display_name`, with the redundant vendor prefix stripped
+    ("Claude Opus" -> "Opus"). Falls back to the `group` slug, and finally to a
+    generic word - a bar with an empty label reads as a bug, not as a bar.
+    """
+    scope = item.get("scope")
+    model = scope.get("model") if isinstance(scope, dict) else None
+    name = model.get("display_name") if isinstance(model, dict) else None
+    if isinstance(name, str) and name.strip():
+        name = name.strip()
+        if name.startswith(_VENDOR_PREFIX) and len(name) > len(_VENDOR_PREFIX):
+            name = name[len(_VENDOR_PREFIX):].strip()
+        if name:
+            return name
+    group = item.get("group")
+    if isinstance(group, str) and group.strip():
+        group = group.strip()
+        # Only lift the first letter: .capitalize() would flatten "MiniMax".
+        return group[:1].upper() + group[1:]
+    return "Model"
 
 
 def _from_bucket(bucket: object) -> Limit | None:

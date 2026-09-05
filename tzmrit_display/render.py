@@ -47,6 +47,13 @@ def _mix(hex_a: str, hex_b: str, t: float) -> tuple[int, int, int]:
 _STALE_WARN = _mix(T.INK_DIM, T.WARN, 0.55)   # >= 5m idle
 _STALE_CRIT = _mix(T.INK_DIM, T.CRIT, 0.55)   # >= 1h idle
 
+# Unconsumed budget in a limit bar: the dark end of the same SURFACE->ACCENT
+# axis the sparkline fill uses. The derivation of t and of the two label inks
+# that go with it is in _limit_bars.
+_BAR_REMAIN = _mix(T.SURFACE, T.ACCENT, 0.35)   # #264365
+_BAR_INK_ON_FILL = T.SURFACE                    # dark ink over the bright fill
+_BAR_INK_ON_REMAIN = T.INK                      # light ink over the dark track
+
 
 def _inactive_color(seconds: float):
     """Color for the inactivity counter, escalating with idle time."""
@@ -221,12 +228,21 @@ class DashboardRenderer:
             t = t[:-1] + "…" if len(t) > 1 else t
         return [(t, False)]
 
+    def _fit(self, d, text, font, avail):
+        """Right-truncate `text` with an ellipsis so it fits `avail` px."""
+        if not text or d.textlength(text, font=font) <= avail:
+            return text
+        while text and d.textlength(text + "…", font=font) > avail:
+            text = text[:-1]
+        return text + "…" if text else ""
+
     def _session_row(self, d, sess, x, w, y):
-        """One session: inactivity counter, marker, name, memory, status.
+        """One session: inactivity counter, marker, name, memory + model, status.
 
         The name's project prefix (present in derived names) is drawn in the
         warm amber tint so the redundant project reads as secondary and the
-        unique suffix pops; the sub-line is memory only, the project dropped.
+        unique suffix pops; the sub-line carries memory and the model in use,
+        the project dropped.
         """
         s = self.scale
         if sess.waiting:
@@ -269,11 +285,16 @@ class DashboardRenderer:
                    fill=T.ACCENT_WARM if is_prefix else base)
             seg_x += d.textlength(text, font=self.f_session)
 
-        if sess.memory_text:
-            # Memory including MCP child processes - they are the bulk of it.
-            # The project is not repeated here; it shows as the tinted prefix.
-            d.text((name_x, y + 30 * s), sess.memory_text,
-                   font=self.f_session_sub, fill=T.INK_FAINT)
+        # Memory including MCP child processes - they are the bulk of it - and
+        # the model that ran the last turn, joined the way summarize() joins its
+        # facts. The project is not repeated here; it shows as the tinted
+        # prefix. An unknown model simply drops out, leaving the memory where it
+        # already was, so the line never shifts. Clipped against the same
+        # `avail` as the name so it cannot run into the status word either.
+        sub = " · ".join(t for t in (sess.memory_text, sess.model_text) if t)
+        if sub:
+            d.text((name_x, y + 30 * s), self._fit(d, sub, self.f_session_sub, avail),
+                   font=self.f_session_sub, fill=T.INK_DIM)
         d.text((right, y), sess.status_text, font=self.f_session_sub, fill=color, anchor="ra")
 
     def _sessions(self, d, sessions, summary, x0, w, y0, y1):
@@ -360,20 +381,57 @@ class DashboardRenderer:
 
         return self._finish(img)
 
-    def _limit_bars(self, d, rows, x0, x1, y):
-        """Rate-limit budget as two wide bars spanning the footer's right half.
+    def _bar_text(self, base, pieces, bx, by, bw, h, fw):
+        """Draw a bar's labels so every pixel gets the ink its ground wants.
 
-        The pair fills x0..x1 side by side, in the same two blues as the
-        sparklines: the consumed fraction (percent/100 from the left) is the
-        graph's bright line color T.ACCENT, the remaining budget the graph's
-        dark fill family. The sparkline fill is ACCENT at alpha 46 over
-        SURFACE, i.e. opaque _mix(SURFACE, ACCENT, 0.18); left there its
-        contrast with SURFACE text is only 1.3:1, so it is lightened along the
-        same SURFACE->ACCENT axis to t=0.75 (#4580C4). That clears WCAG AA for
-        the near-black SURFACE text at 4.75:1, while staying visibly darker
-        than the bright ACCENT (7.69:1) beside it so the two blues still read
-        as filled-vs-remaining. A bar is itself a marker shape, so the colored
-        chip means something without the theme.py ban on bare colored text.
+        A label routinely straddles the fill edge - "Session 13%" starts one
+        pad in and the edge is at 13% of the bar - so this is the normal case,
+        not a corner one, and picking one color per piece would leave half of
+        every label washed out. Both inks are therefore rendered on a
+        bar-sized layer and the fill edge decides pixel by pixel which layer
+        lands: dark ink over the bright fill, light ink over the dark track.
+        The seam is invisible because it IS the edge it splits on.
+        """
+        left, top = int(bx), int(by)
+        size = (int(bx + bw) + 1 - left, int(by + h) + 1 - top)
+        edge = max(0, min(size[0], int(round(fw))))
+        for ink, (a, b) in ((_BAR_INK_ON_FILL, (0, edge)),
+                            (_BAR_INK_ON_REMAIN, (edge, size[0]))):
+            if b <= a:
+                continue
+            layer = Image.new("RGBA", size, (0, 0, 0, 0))
+            ld = ImageDraw.Draw(layer)
+            for (px, py), text, anchor in pieces:
+                ld.text((px - left, py - top), text, font=self.f_small,
+                        fill=ink, anchor=anchor)
+            base.alpha_composite(layer.crop((a, 0, b, size[1])), dest=(left + a, top))
+
+    def _limit_bars(self, base, d, rows, x0, x1, y):
+        """Rate-limit budget as wide bars spanning the footer's right half.
+
+        The bars fill x0..x1 side by side - one per window the account reports
+        (session, weekly, and a model-scoped weekly per scoped model) - in the
+        same two blues as the sparklines: the consumed fraction (percent/100
+        from the left) is the graph's bright line color T.ACCENT, the remaining
+        budget a dark blue on the same SURFACE->ACCENT axis as the sparkline
+        fill.
+
+        The split between the two blues is what the bar encodes, so it carries
+        the contrast budget: `remain` sits at t=0.35 (#264365), which reads
+        4.01:1 against the bright ACCENT fill. The track then only reaches
+        1.92:1 against the panel - deliberate, and in family with the
+        INK_FAINT rules that already delimit this footer at 2.48:1; the track
+        is chrome marking the 100% reference, the filled/unfilled step is the
+        datum. (It used to be the other way round: t=0.75 put the track at
+        4.75:1 on the panel but left only 1.62:1 against its own fill, which
+        is the weak step this replaces.)
+
+        Because `remain` is now dark, one ink can no longer serve both halves:
+        the near-black T.SURFACE holds 7.69:1 on the bright fill but would
+        vanish on the track, so the track's share of each label is drawn in
+        T.INK at 8.40:1 instead - see _bar_text for the pixel-exact split. A
+        bar is itself a marker shape, so the colored chip means something
+        without breaking the theme.py ban on bare colored text.
         """
         s = self.scale
         n = max(1, len(rows))
@@ -383,7 +441,7 @@ class DashboardRenderer:
         pad = 16 * s
         bw = (x1 - x0 - (n - 1) * gap) / n
         cy = y + h / 2
-        remain = _mix(T.SURFACE, T.ACCENT, 0.75)  # lightened graph-fill blue
+        remain = _BAR_REMAIN
         for i, lim in enumerate(rows):
             bx = x0 + i * (bw + gap)
             d.rounded_rectangle([bx, y, bx + bw, y + h], radius=rad, fill=remain)
@@ -391,12 +449,24 @@ class DashboardRenderer:
             if fw > 0:
                 d.rounded_rectangle([bx, y, bx + fw, y + h],
                                     radius=int(min(rad, fw / 2)), fill=T.ACCENT)
-            d.text((bx + pad, cy), f"{lim.label} {lim.percent}%",
-                   font=self.f_small, fill=T.SURFACE, anchor="lm")
+            room = bw - 2 * pad
+            # Truncate the name, never the number: the percentage is the datum
+            # and a bar reading "An Extremely …" without it says nothing.
+            value = f" {lim.percent}%"
+            label = self._fit(d, lim.label, self.f_small,
+                              room - d.textlength(value, font=self.f_small)) + value
+            pieces = [((bx + pad, cy), label, "lm")]
+            # The countdown is the first thing to go when the bars get narrow:
+            # the percentage is the datum, the reset is the nice-to-have, and
+            # two pieces colliding mid-bar ("Session 100%10h04m") is worse than
+            # one piece missing. Four bars with a full window and a long reset
+            # is where they actually meet.
             reset = lim.reset_text()
-            if reset:
-                d.text((bx + bw - pad, cy), reset,
-                       font=self.f_small, fill=T.SURFACE, anchor="rm")
+            if reset and (d.textlength(label, font=self.f_small)
+                          + d.textlength(reset, font=self.f_small)
+                          + 8 * s) <= room:
+                pieces.append(((bx + bw - pad, cy), reset, "rm"))
+            self._bar_text(base, pieces, bx, y, bw, h, fw)
 
     def render_split(self, metrics: dict, sessions: list, summary: str,
                      footer: list[tuple[str, str]] | None = None,
@@ -440,6 +510,6 @@ class DashboardRenderer:
             self._footer_row(d, footer, mx, split_x - mx - 20 * s, fy)
         rows = limits.rows if limits else []
         if rows:
-            self._limit_bars(d, rows, right_x, W - mx, fy - 10 * s)
+            self._limit_bars(img, d, rows, right_x, W - mx, fy - 10 * s)
 
         return self._finish(img)

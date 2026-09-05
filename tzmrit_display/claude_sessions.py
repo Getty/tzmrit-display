@@ -1,8 +1,11 @@
 """Claude Code sessions running on this machine.
 
 Claude Code writes a file `~/.claude/sessions/<pid>.json` for every running
-session and keeps `status` current in it. That file is all this module reads -
-there is no service to query and no API login involved.
+session and keeps `status` current in it. That file plus the session's own
+transcript jsonl are all this module reads - there is no service to query and
+no API login involved. The transcript answers the two questions the session
+file does not: when the last LLM turn happened (_transcript_mtime) and which
+model ran it (_transcript_model).
 
 What is NOT visible here:
   * Sessions on other machines (Remote Control goes through the cloud bridge,
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -34,7 +38,8 @@ _UNIX_EPOCH_SECONDS = 62_135_596_800  # 0001-01-01 .. 1970-01-01
 
 SESSION_DIR = Path.home() / ".claude" / "sessions"
 # Per-session transcript lives here as <cwd-encoded>/<sessionId>.jsonl. Its
-# mtime is the "last LLM activity" clock (see _transcript_mtime).
+# mtime is the "last LLM activity" clock (see _transcript_mtime) and its
+# assistant lines name the model in use (see _transcript_model).
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # The waiting-for-a-human state has two spellings on the wire: Claude Code
@@ -256,6 +261,120 @@ def _transcript_mtime(session_id: str, ttl: float = _ACTIVE_TTL,
     return mtime
 
 
+# The model in use is only in the transcript, never in the session file. It
+# changes at most when someone types /model, so the TTL is generous - a minute
+# of staleness costs nothing, re-reading every frame would cost a file seek per
+# session per frame.
+_MODEL_TTL = 60.0
+# How much of the transcript tail to read. Transcripts run to tens of MB and
+# this sits in the frame loop, so the file is never read whole. Measured across
+# the 40 largest transcripts on this machine the last `"model"` sat at most
+# ~8 KB from EOF, so 64 KB is roughly eight times the observed worst case.
+_MODEL_TAIL = 64 * 1024
+_model_cache: dict[str, tuple[float, str]] = {}
+
+# A dated snapshot suffix (claude-haiku-4-5-20251001): not part of the version.
+_SNAPSHOT_DATE = re.compile(r"^\d{6,8}$")
+
+
+def _model_label(model_id: str) -> str:
+    """Short readable form of a model id: `claude-opus-5` -> `opus 5`.
+
+    The `claude-` vendor prefix says nothing on a panel that only ever shows
+    Claude Code sessions, and the dashes read as one long token, so the family
+    and its dotted version are separated: `claude-haiku-4-5-20251001` ->
+    `haiku 4.5`, `claude-fable-5-1` -> `fable 5.1`.
+
+    Anything that does not fit that shape (a bare alias like `sonnet`, or a
+    third-party id arriving through a proxy) is passed through de-prefixed
+    rather than mangled - unknown is not a reason to show nothing, and the row
+    truncates over-long text anyway.
+    """
+    raw = (model_id or "").strip()
+    if not raw:
+        return ""
+    name = raw[len("claude-"):] if raw.startswith("claude-") else raw
+    parts = name.split("-")
+    family, version = parts[0], parts[1:]
+    if version and _SNAPSHOT_DATE.match(version[-1]):
+        version = version[:-1]
+    if family and version and all(p.isdigit() for p in version):
+        return f"{family} {'.'.join(version)}"
+    return "-".join([family] + version) if family else raw
+
+
+def _tail_model_id(path: Path, tail: int) -> str:
+    """Model id of the last real assistant turn in a transcript's tail.
+
+    Only the last `tail` bytes are read and they are scanned backwards, so the
+    cost does not grow with the transcript. Two kinds of line are stepped over:
+
+      * `isSidechain: true` - a subagent turn, which often runs a smaller model
+        and must not be mistaken for the session's own. (Current Claude Code
+        writes those to `<sessionId>/subagents/agent-*.jsonl` instead, which
+        this glob never matches; older versions inlined them here.)
+      * `<synthetic>` - Claude Code's placeholder on lines it wrote itself
+        ("No response requested."), not a model that ever ran.
+    """
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - tail))
+            chunk = fh.read()
+    except OSError:
+        return ""
+    lines = chunk.decode("utf-8", "replace").splitlines()
+    if size > tail and lines:
+        lines.pop(0)  # the seek landed mid-record; that fragment is not JSON
+    for line in reversed(lines):
+        if '"model"' not in line:
+            continue  # cheap gate: most lines are user turns and tool results
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("isSidechain"):
+            continue
+        message = record.get("message")
+        model = message.get("model") if isinstance(message, dict) else None
+        if isinstance(model, str) and model and not model.startswith("<"):
+            return model
+    return ""
+
+
+def _transcript_model(session_id: str, ttl: float = _MODEL_TTL,
+                      projects: Path | None = None, tail: int = _MODEL_TAIL) -> str:
+    """Raw model id the session last ran, or "" when it cannot be determined.
+
+    Same lookup as _transcript_mtime - glob by sessionId rather than rebuilding
+    the cwd path encoding - because the session file itself carries no model
+    field at all. No transcript, no hit in the tail, or an IO error all give ""
+    so the row simply shows what it showed before.
+    """
+    if not session_id:
+        return ""
+    now = time.monotonic()
+    hit = _model_cache.get(session_id)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    projects = projects or PROJECTS_DIR
+    model = ""
+    try:
+        for path in sorted(projects.glob(f"*/{session_id}.jsonl")):
+            model = _tail_model_id(path, tail)
+            if model:
+                break
+    except OSError:
+        model = ""
+    _model_cache[session_id] = (now, model)
+    # Don't let entries for ended sessions accumulate forever
+    if len(_model_cache) > 64:
+        for dead in [k for k, v in _model_cache.items() if now - v[0] > 5 * ttl]:
+            _model_cache.pop(dead, None)
+    return model
+
+
 @dataclass
 class Session:
     pid: int
@@ -268,6 +387,7 @@ class Session:
     rss: int = 0
     child_count: int = 0
     active_at: float = 0.0
+    model: str = ""
 
     @property
     def project(self) -> str:
@@ -312,6 +432,10 @@ class Session:
     @property
     def memory_text(self) -> str:
         return fmt_memory(self.rss)
+
+    @property
+    def model_text(self) -> str:
+        return _model_label(self.model)
 
     @property
     def age_text(self) -> str:
@@ -374,6 +498,7 @@ def list_sessions(directory: Path | None = None) -> list[Session]:
         ))
         out[-1].rss, out[-1].child_count = process_memory(pid)
         out[-1].active_at = _transcript_mtime(out[-1].session_id) or 0.0
+        out[-1].model = _transcript_model(out[-1].session_id)
 
     out.sort(key=lambda s: s.sort_key)
     return out

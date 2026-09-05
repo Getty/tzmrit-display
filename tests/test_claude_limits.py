@@ -89,6 +89,80 @@ class TestParseUsage:
         assert limits.session.percent == 0
 
 
+class TestScopedWeekly:
+    """The account may carry model-scoped weekly windows beside the two flat
+    ones. Which model they scope moves with the plan, so nothing here may name
+    one: the fixture still says Opus, the maintainer's account says Fable."""
+
+    def _scoped(self, **overrides):
+        item = {"kind": "weekly_scoped", "group": "opus", "percent": 52,
+                "severity": "warning", "resets_at": "2026-08-31T00:00:00Z",
+                "scope": {"model": {"display_name": "Claude Opus"}}}
+        item.update(overrides)
+        return parse_usage({"limits": [item]}).scoped[0]
+
+    def test_fixture_yields_three_bars_in_reading_order(self):
+        rows = parse_usage(load_usage()).rows
+        assert [r.label for r in rows] == ["Session", "Weekly", "Opus"]
+        assert [r.percent for r in rows] == [13, 37, 52]
+
+    def test_severity_and_reset_are_carried(self):
+        lim = self._scoped()
+        assert lim.severity == "warning"
+        assert lim.resets_at == datetime(2026, 8, 31, tzinfo=timezone.utc)
+
+    def test_label_drops_the_redundant_vendor_prefix(self):
+        # "Claude" beside neighbours reading "Session"/"Weekly" says nothing.
+        assert self._scoped().label == "Opus"
+        assert self._scoped(
+            scope={"model": {"display_name": "Claude Fable"}}).label == "Fable"
+
+    def test_label_keeps_a_name_that_is_not_vendor_prefixed(self):
+        assert self._scoped(scope={"model": {"display_name": "Sonnet"}}).label == "Sonnet"
+
+    def test_label_falls_back_to_the_group_slug(self):
+        assert self._scoped(scope=None, group="fable").label == "Fable"
+        assert self._scoped(scope={"model": {}}, group="opus").label == "Opus"
+
+    def test_group_fallback_does_not_flatten_inner_capitals(self):
+        assert self._scoped(scope=None, group="miniMax").label == "MiniMax"
+
+    def test_last_resort_label_is_never_empty(self):
+        # An unlabelled bar reads as a bug; a generic word reads as a bar.
+        assert self._scoped(scope=None, group=None).label == "Model"
+        assert self._scoped(scope=None, group="  ").label == "Model"
+
+    def test_bare_vendor_name_is_not_stripped_to_nothing(self):
+        assert self._scoped(scope={"model": {"display_name": "Claude"}}).label == "Claude"
+
+    def test_several_scoped_windows_all_survive_in_payload_order(self):
+        data = load_usage()
+        data["limits"].append({
+            "kind": "weekly_scoped", "group": "fable", "percent": 8,
+            "scope": {"model": {"display_name": "Claude Fable"}}})
+        assert [r.label for r in parse_usage(data).rows] == \
+            ["Session", "Weekly", "Opus", "Fable"]
+
+    def test_a_scoped_window_alone_is_still_usable(self):
+        """Nothing but a scoped entry is one bar's worth of truth, not None."""
+        limits = parse_usage({"limits": [
+            {"kind": "weekly_scoped", "group": "opus", "percent": 52}]})
+        assert limits is not None
+        assert [r.label for r in limits.rows] == ["Opus"]
+
+    def test_flat_bucket_fallback_has_no_scoped_bars(self):
+        data = load_usage()
+        del data["limits"]
+        limits = parse_usage(data)
+        assert limits.scoped == []
+        assert len(limits.rows) == 2
+
+    def test_no_scoped_entry_means_two_bars(self):
+        data = load_usage()
+        data["limits"] = [e for e in data["limits"] if e["kind"] != "weekly_scoped"]
+        assert len(parse_usage(data).rows) == 2
+
+
 class TestFormatting:
     @pytest.mark.parametrize("seconds,expected", [
         (0, "now"), (-30, "now"), (59, "0m"), (600, "10m"),

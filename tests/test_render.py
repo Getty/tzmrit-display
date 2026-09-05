@@ -3,10 +3,15 @@
 import math
 import time
 
+import pytest
+
 from tzmrit_display import theme as T
 from tzmrit_display.claude_sessions import Session
 from tzmrit_display.render import (
     DashboardRenderer,
+    _BAR_INK_ON_FILL,
+    _BAR_INK_ON_REMAIN,
+    _BAR_REMAIN,
     _STALE_CRIT,
     _STALE_WARN,
     _inactive_color,
@@ -171,6 +176,264 @@ class TestNameSegments:
         assert len(segs) == 1
         assert segs[0][1] is False
         assert segs[0][0].endswith("…")
+
+
+class TestSessionSubLine:
+    """The sub-line under the session name: memory, then the model in use."""
+
+    def _row(self, sess, width=900):
+        """Draw one session row, returning every (xy, text, fill) drawn."""
+        from PIL import Image, ImageDraw
+        r = DashboardRenderer(scale=1)
+        d = ImageDraw.Draw(Image.new("RGB", (2000, 200)))
+        calls = []
+        real = d.text
+
+        def spy(xy, text, *a, **kw):
+            calls.append((xy, text, kw.get("fill")))
+            return real(xy, text, *a, **kw)
+
+        d.text = spy
+        r._session_row(d, sess, 0, width, 0)
+        return r, d, calls
+
+    def _session(self, **kw):
+        return Session(pid=1, name="display-c0", cwd="/home/user/dev/display",
+                       status="idle", kind="interactive", **kw)
+
+    def _sub(self, calls):
+        return [c for c in calls if "MB" in c[1] or "GB" in c[1]]
+
+    def test_memory_and_model_share_one_line(self):
+        sess = self._session(rss=512 * 1024 ** 2, model="claude-opus-5")
+        _, _, calls = self._row(sess)
+        sub = self._sub(calls)
+        assert len(sub) == 1
+        assert sub[0][1] == "512 MB · opus 5"
+
+    def test_sub_line_is_ink_dim_not_ink_faint(self):
+        """The maintainer found INK_FAINT too dark to read on the panel."""
+        sess = self._session(rss=512 * 1024 ** 2, model="claude-opus-5")
+        _, _, calls = self._row(sess)
+        assert self._sub(calls)[0][2] == T.INK_DIM
+
+    def test_unknown_model_leaves_the_line_where_it_was(self):
+        """No transcript, no hit, IO error -> memory alone, same position."""
+        with_model = self._session(rss=512 * 1024 ** 2, model="claude-opus-5")
+        without = self._session(rss=512 * 1024 ** 2)
+        _, _, a = self._row(with_model)
+        _, _, b = self._row(without)
+        assert self._sub(b)[0][1] == "512 MB"
+        assert self._sub(a)[0][0] == self._sub(b)[0][0]
+
+    def test_sub_line_stays_clear_of_the_status_word(self):
+        """A wide model string must be clipped like the name is, not run into
+        'waiting for you' on the right."""
+        sess = self._session(rss=512 * 1024 ** 2,
+                             model="a-very-long-third-party-model-identifier-x")
+        r, d, calls = self._row(sess, width=320)
+        drawn = self._sub(calls)[0]
+        status_w = d.textlength(sess.status_text, font=r.f_session_sub)
+        avail = 320 - drawn[0][0] - status_w - 20
+        assert drawn[1].endswith("…")
+        assert d.textlength(drawn[1], font=r.f_session_sub) <= avail
+
+    def test_fit_leaves_a_fitting_string_untouched(self):
+        from PIL import Image, ImageDraw
+        r = DashboardRenderer(scale=1)
+        d = ImageDraw.Draw(Image.new("RGB", (2000, 200)))
+        assert r._fit(d, "512 MB · opus 5", r.f_session_sub, 10_000) \
+            == "512 MB · opus 5"
+
+
+def _contrast(a, b):
+    """WCAG 2.x contrast ratio between two (r, g, b) tuples."""
+    def lin(c):
+        c /= 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def lum(c):
+        r, g, bl = (lin(v) for v in c)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+
+    la, lb = lum(a), lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+class TestLimitBarContrast:
+    """The bar encodes its datum in the step between consumed and remaining,
+    so that step carries the contrast budget - and the label ink has to follow
+    whichever of the two it happens to sit on."""
+
+    def test_consumed_versus_remaining_is_a_clear_step(self):
+        # The old lightened track (t=0.75) managed only 1.62:1 here, which is
+        # the weak step this replaces.
+        assert _contrast(_rgb(T.ACCENT), _BAR_REMAIN) >= 4.0
+
+    def test_dark_ink_clears_aa_on_the_bright_fill(self):
+        assert _contrast(_rgb(_BAR_INK_ON_FILL), _rgb(T.ACCENT)) >= 4.5
+
+    def test_light_ink_clears_aa_on_the_dark_track(self):
+        assert _contrast(_rgb(_BAR_INK_ON_REMAIN), _BAR_REMAIN) >= 4.5
+
+    def test_each_ink_would_fail_on_the_other_ground(self):
+        """Why two inks and not one: neither survives both backgrounds, which
+        is exactly what makes the pixel-exact split necessary."""
+        assert _contrast(_rgb(_BAR_INK_ON_FILL), _BAR_REMAIN) < 4.5
+        assert _contrast(_rgb(_BAR_INK_ON_REMAIN), _rgb(T.ACCENT)) < 4.5
+
+    def test_track_stays_visible_against_the_panel(self):
+        # Chrome, not datum: in family with the INK_FAINT rules around it.
+        assert _contrast(_BAR_REMAIN, _rgb(T.SURFACE)) \
+            >= _contrast(_rgb(T.INK_FAINT), _rgb(T.SURFACE)) * 0.75
+
+
+class TestLimitBarInk:
+    """Every label pixel must be drawn in the ink its own background wants,
+    at any fill level - including a label straddling the fill edge."""
+
+    BX, BW, BY, BH, PAD = 40, 400, 20, 30, 16
+
+    def _limit(self, percent):
+        from datetime import datetime, timedelta, timezone
+        from tzmrit_display.claude_limits import Limit
+        return Limit("Session", percent, "normal",
+                     datetime.now(timezone.utc) + timedelta(days=2, hours=1))
+
+    def _bar(self, percent):
+        from PIL import Image, ImageDraw
+        r = DashboardRenderer(scale=1)
+        img = Image.new("RGBA", (500, 80), T.SURFACE)
+        d = ImageDraw.Draw(img)
+        r._limit_bars(img, d, [self._limit(percent)],
+                      self.BX, self.BX + self.BW, self.BY)
+        return r, d, img
+
+    def _band(self, img, x_from, x_to):
+        """Luminance (as contrast against black) of a slice of the label band."""
+        px = img.convert("RGB").load()
+        return [_contrast(px[x, y], (0, 0, 0))
+                for x in range(int(x_from), int(x_to))
+                for y in range(self.BY + 6, self.BY + self.BH - 6)]
+
+    def _has_dark_ink(self, band):
+        return min(band) < _contrast(_rgb(T.ACCENT), (0, 0, 0)) * 0.5
+
+    def _has_light_ink(self, band):
+        return max(band) > _contrast(_BAR_REMAIN, (0, 0, 0)) * 2
+
+    def test_label_is_dark_ink_when_the_bar_is_full(self):
+        # 100%: the label sits wholly on the bright fill -> dark glyphs.
+        _, _, img = self._bar(100)
+        assert self._has_dark_ink(self._band(img, self.BX + self.PAD, self.BX + 120))
+
+    def test_label_is_light_ink_when_the_bar_is_empty(self):
+        # 0%: the label sits wholly on the dark track -> light glyphs.
+        _, _, img = self._bar(0)
+        assert self._has_light_ink(self._band(img, self.BX + self.PAD, self.BX + 120))
+
+    def _straddle(self, r, d, span_start, span_end, percent):
+        """Assert the edge really falls inside this piece, then check both inks.
+
+        The precondition matters: a piece that has quietly stopped crossing the
+        edge would let the ink assertions pass without testing anything.
+        """
+        edge = self.BX + self.BW * percent / 100
+        assert span_start < edge - 1 and edge + 1 < span_end, \
+            f"the fill edge at {edge} does not cross the piece {span_start}..{span_end}"
+        _, _, img = self._bar(percent)
+        assert self._has_dark_ink(self._band(img, span_start, edge - 1)), \
+            "no dark ink on the filled side of the edge"
+        assert self._has_light_ink(self._band(img, edge + 1, span_end)), \
+            "no light ink on the unfilled side of the edge"
+
+    def test_a_straddling_left_label_uses_both_inks(self):
+        """The normal case, not a corner one: 'Session 13%' starts one pad in
+        while the edge sits at 13% of the bar, so the piece is cut in two."""
+        r, d, _ = self._bar(0)
+        percent = 12
+        for _ in range(3):  # the width depends on the number it prints
+            w = d.textlength(f"Session {percent}%", font=r.f_small)
+            percent = round(100 * (self.PAD + w / 2) / self.BW)
+        w = d.textlength(f"Session {percent}%", font=r.f_small)
+        self._straddle(r, d, self.BX + self.PAD, self.BX + self.PAD + w, percent)
+
+    def test_a_straddling_reset_text_uses_both_inks(self):
+        """The right-anchored piece straddles instead once the bar is nearly
+        full - the same split has to serve it."""
+        r, d, _ = self._bar(0)
+        reset = self._limit(95).reset_text()
+        w = d.textlength(reset, font=r.f_small)
+        right = self.BX + self.BW - self.PAD
+        percent = round(100 * (right - w / 2 - self.BX) / self.BW)
+        self._straddle(r, d, right - w, right, percent)
+
+
+class TestLimitBarFit:
+    """Bar count is driven by the payload (a scoped weekly per scoped model),
+    so the label and the countdown must not be allowed to meet in the middle."""
+
+    # The real right half at scale 1, so the fit decisions are the panel's.
+    X0, X1, GAP, PAD = int(T.WIDTH * 0.46) + 34, T.WIDTH - T.MARGIN_X, 18, 16
+
+    def _pieces(self, rows):
+        """The text pieces `_limit_bars` decides to draw, per bar."""
+        from PIL import Image, ImageDraw
+        r = DashboardRenderer(scale=1)
+        captured = []
+        r._bar_text = lambda base, pieces, *a: captured.append(pieces)
+        img = Image.new("RGBA", (T.WIDTH, 80), T.SURFACE)
+        r._limit_bars(img, ImageDraw.Draw(img), rows, self.X0, self.X1, 20)
+        return r, captured
+
+    def _bar_width(self, n):
+        return (self.X1 - self.X0 - (n - 1) * self.GAP) / n
+
+    def _limits(self, n, label="Session", percent=100, reset_hours=10):
+        from datetime import datetime, timedelta, timezone
+        from tzmrit_display.claude_limits import Limit
+        when = datetime.now(timezone.utc) + timedelta(hours=reset_hours, minutes=5)
+        return [Limit(label, percent, "normal", when) for _ in range(n)]
+
+    def test_a_wide_bar_keeps_the_countdown(self):
+        rows = self._limits(1)
+        _, pieces = self._pieces(rows)
+        assert len(pieces[0]) == 2
+        assert pieces[0][1][1] == rows[0].reset_text()
+
+    def test_a_narrow_bar_drops_the_countdown_rather_than_colliding(self):
+        """Reproduced before the fix as 'Session 100%10h04m' - two pieces
+        printed over each other into mush."""
+        _, pieces = self._pieces(self._limits(4))
+        assert all(len(p) == 1 for p in pieces), \
+            "the countdown must give way once it no longer fits"
+        assert pieces[0][0][1] == "Session 100%"
+
+    def test_kept_pieces_never_overlap(self):
+        from PIL import Image, ImageDraw
+        d = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+        for n in (1, 2, 3, 4, 5):
+            r, bars = self._pieces(self._limits(n))
+            for pieces in bars:
+                if len(pieces) < 2:
+                    continue
+                (lx, _), ltext, _ = pieces[0]
+                (rx, _), rtext, _ = pieces[1]
+                assert lx + d.textlength(ltext, font=r.f_small) \
+                    <= rx - d.textlength(rtext, font=r.f_small), \
+                    f"label and countdown overlap with {n} bars"
+
+    def test_an_over_long_name_is_clipped_but_keeps_its_number(self):
+        """Truncate the name, never the datum - "An Extremely …" alone is a
+        bar that says nothing."""
+        from PIL import Image, ImageDraw
+        rows = self._limits(5, label="An Extremely Long Scoped Model Name", percent=41)
+        r, bars = self._pieces(rows)
+        d = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+        text = bars[0][0][1]
+        assert text.endswith(" 41%")
+        assert "…" in text
+        assert d.textlength(text, font=r.f_small) <= self._bar_width(5) - 2 * self.PAD
 
 
 class TestSplitLayout:

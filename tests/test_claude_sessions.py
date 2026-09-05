@@ -12,8 +12,11 @@ from tzmrit_display.claude_sessions import (
     Session,
     _fmt_age,
     _fmt_inactive,
+    _MODEL_TAIL,
+    _model_label,
     _proc_start,
     _transcript_mtime,
+    _transcript_model,
     _windows_start_ticks,
     list_sessions,
     summarize,
@@ -42,6 +45,25 @@ def write_session(directory, pid, **overrides):
     data.update(overrides)
     (directory / f"{pid}.json").write_text(json.dumps(data), encoding="utf-8")
     return data
+
+
+def assistant_line(model, sidechain=False):
+    """One transcript record in the shape Claude Code writes it.
+
+    Verified against a live transcript: the model sits in `message.model` of an
+    `assistant` record, and `isSidechain` marks a subagent turn.
+    """
+    return {"type": "assistant", "isSidechain": sidechain,
+            "message": {"role": "assistant", "model": model}}
+
+
+def write_transcript(projects, session_id, records, project="home-user-dev-x"):
+    """Write records as <projects>/<project>/<session_id>.jsonl."""
+    proj = projects / project
+    proj.mkdir(parents=True, exist_ok=True)
+    path = proj / f"{session_id}.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return path
 
 
 class TestProcStart:
@@ -241,6 +263,133 @@ class TestInactivity:
 
     def test_transcript_mtime_empty_id_is_none(self, tmp_path):
         assert _transcript_mtime("", ttl=0, projects=tmp_path) is None
+
+
+class TestModelLabel:
+    """Short label for the model id, so the row reads `opus 5`, not
+    `claude-opus-5`."""
+
+    @pytest.mark.parametrize("model_id,expected", [
+        # The ids actually seen in transcripts on this machine
+        ("claude-opus-5", "opus 5"),
+        ("claude-sonnet-5", "sonnet 5"),
+        ("claude-opus-4-8", "opus 4.8"),
+        ("claude-fable-5-1", "fable 5.1"),
+        ("claude-haiku-4-5-20251001", "haiku 4.5"),   # snapshot date dropped
+        ("sonnet", "sonnet"),                          # bare alias
+        # Unknown shapes must degrade, never crash and never vanish
+        ("claude-3-5-sonnet-20241022", "3-5-sonnet"),
+        ("MiniMax-M3", "MiniMax-M3"),
+        ("deepseek-v4-flash-0731", "deepseek-v4-flash-0731"),
+        ("", ""),
+    ])
+    def test_label(self, model_id, expected):
+        assert _model_label(model_id) == expected
+
+    def test_session_exposes_the_label(self):
+        assert Session(1, "n", "/x", "idle", "i", model="claude-opus-5").model_text \
+            == "opus 5"
+
+    def test_unknown_model_is_an_empty_label(self):
+        assert Session(1, "n", "/x", "idle", "i").model_text == ""
+
+
+class TestTranscriptModel:
+    """The model is only in the transcript - the session file has no such
+    field - and the transcript is read from the tail, never whole."""
+
+    def test_reads_the_last_assistant_model(self, tmp_path):
+        write_transcript(tmp_path, "sid-a", [
+            assistant_line("claude-sonnet-5"),
+            {"type": "user", "message": {"role": "user", "content": "hi"}},
+            assistant_line("claude-opus-5"),
+        ])
+        assert _transcript_model("sid-a", ttl=0, projects=tmp_path) == "claude-opus-5"
+
+    def test_subagent_turns_do_not_override_the_session_model(self, tmp_path):
+        # A fan-out ends with subagent turns on a smaller model; the row must
+        # keep naming the model the session itself runs.
+        write_transcript(tmp_path, "sid-b", [
+            assistant_line("claude-opus-5"),
+            assistant_line("claude-haiku-4-5-20251001", sidechain=True),
+            assistant_line("claude-haiku-4-5-20251001", sidechain=True),
+        ])
+        assert _transcript_model("sid-b", ttl=0, projects=tmp_path) == "claude-opus-5"
+
+    def test_synthetic_placeholder_is_not_a_model(self, tmp_path):
+        # Claude Code writes "<synthetic>" on lines no model produced.
+        write_transcript(tmp_path, "sid-c", [
+            assistant_line("claude-opus-5"),
+            assistant_line("<synthetic>"),
+        ])
+        assert _transcript_model("sid-c", ttl=0, projects=tmp_path) == "claude-opus-5"
+
+    def test_broken_line_is_skipped_not_fatal(self, tmp_path):
+        path = write_transcript(tmp_path, "sid-d", [assistant_line("claude-opus-5")])
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write('{"message": {"model": "claude-sonnet-5"\n')  # truncated write
+        assert _transcript_model("sid-d", ttl=0, projects=tmp_path) == "claude-opus-5"
+
+    def test_only_the_tail_is_read(self, tmp_path):
+        """The performance contract: transcripts run to tens of MB in the frame
+        loop, so a model buried before the tail window is deliberately NOT
+        found. Turning this green by reading the whole file is the regression."""
+        proj = tmp_path / "home-user-dev-x"
+        proj.mkdir()
+        filler = json.dumps({"type": "user", "pad": "x" * 4000}) + "\n"
+        # The model is on line 2, not line 1: line 1 is dropped anyway as the
+        # fragment the tail seek lands in, so it must not be what hides it.
+        (proj / "sid-e.jsonl").write_text(
+            filler
+            + json.dumps(assistant_line("claude-opus-5")) + "\n"
+            + filler * (2 * _MODEL_TAIL // len(filler) + 1),
+            encoding="utf-8")
+        assert _transcript_model("sid-e", ttl=0, projects=tmp_path) == ""
+
+    def test_recent_model_wins_over_an_older_one_in_the_tail(self, tmp_path):
+        proj = tmp_path / "home-user-dev-x"
+        proj.mkdir()
+        filler = json.dumps({"type": "user", "pad": "x" * 4000}) + "\n"
+        (proj / "sid-f.jsonl").write_text(
+            json.dumps(assistant_line("claude-sonnet-5")) + "\n"
+            + filler * (2 * _MODEL_TAIL // len(filler) + 1)
+            + json.dumps(assistant_line("claude-opus-5")) + "\n",
+            encoding="utf-8")
+        assert _transcript_model("sid-f", ttl=0, projects=tmp_path) == "claude-opus-5"
+
+    def test_no_transcript_is_empty(self, tmp_path):
+        assert _transcript_model("nope", ttl=0, projects=tmp_path) == ""
+
+    def test_transcript_without_any_model_is_empty(self, tmp_path):
+        write_transcript(tmp_path, "sid-g", [{"type": "user", "message": {"x": 1}}])
+        assert _transcript_model("sid-g", ttl=0, projects=tmp_path) == ""
+
+    def test_empty_session_id_is_empty(self, tmp_path):
+        assert _transcript_model("", ttl=0, projects=tmp_path) == ""
+
+    def test_cache_avoids_re_reading_every_frame(self, tmp_path):
+        from tzmrit_display import claude_sessions as cs
+        cs._model_cache.clear()
+        write_transcript(tmp_path, "sid-h", [assistant_line("claude-opus-5")])
+        assert cs._transcript_model("sid-h", projects=tmp_path) == "claude-opus-5"
+        cs._model_cache["sid-h"] = (cs.time.monotonic(), "claude-sonnet-5")
+        assert cs._transcript_model("sid-h", projects=tmp_path) == "claude-sonnet-5"
+        cs._model_cache.clear()
+
+    def test_listing_fills_the_model_from_the_transcript(self, tmp_path, monkeypatch):
+        from tzmrit_display import claude_sessions as cs
+        cs._model_cache.clear()
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        projects = tmp_path / "projects"
+        write_session(sessions_dir, os.getpid(), procStart=own_start_token(),
+                      sessionId="sid-live")
+        write_transcript(projects, "sid-live", [assistant_line("claude-opus-5")])
+        monkeypatch.setattr(cs, "PROJECTS_DIR", projects)
+        sessions = cs.list_sessions(sessions_dir)
+        assert len(sessions) == 1
+        assert sessions[0].model_text == "opus 5"
+        cs._model_cache.clear()
 
 
 class TestMemory:
