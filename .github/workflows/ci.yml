@@ -53,15 +53,23 @@ jobs:
       - name: Ensure NSIS
         shell: pwsh
         run: |
-          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          # Both locations, in the order build.bat looks in them - checking
+          # only one would reinstall and then fail over an NSIS the build
+          # itself would have found.
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "${env:ProgramFiles}\NSIS\makensis.exe"
+          )
+          $makensis = $null
           foreach ($attempt in 1..3) {
-            if (Test-Path $makensis) { break }
+            $makensis = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if ($makensis) { break }
             if ($attempt -gt 1) { Start-Sleep -Seconds (15 * $attempt) }
             Write-Host "Installing NSIS (attempt $attempt)"
             choco install nsis -y --no-progress
           }
-          if (-not (Test-Path $makensis)) {
-            throw "NSIS still missing at $makensis after three attempts"
+          if (-not $makensis) {
+            throw "NSIS still missing after three attempts; looked in: $($candidates -join ', ')"
           }
           & $makensis /VERSION
 
