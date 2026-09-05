@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-09-05T01:23:51Z
+created: 2026-09-04T23:08:12Z
+id: 12
+priority: high
+started: 2026-09-05T01:23:51Z
+status: done
+tags:
+- render
+- ui
+title: 'Dashboard: memory heller, Model anzeigen, dritte Limit-Leiste, Balkenkontrast'
+updated: 2026-09-05T01:23:51Z
+---
+
+Maintainer-Wunsch am Panel:
+- Memory-Subzeile war INK_FAINT (#4A5262), zu dunkel -> INK_DIM.
+- Benutztes LLM-Model neben dem Memory anzeigen. Quelle ist das Transcript-JSONL (message.model); die Session-JSON hat kein Model-Feld.
+- Limit-Balken: der unbelegte Teil soll dunkler werden, Kontrast zum belegten intensiver. Konflikt mit dem WCAG-Argument im _limit_bars-Docstring (SURFACE-farbener Text auf dem Balken) - Textfarbe muss mitgehen.
+- Dritte Leiste: kind "weekly_scoped" (scope.model.display_name, z.B. Opus/Fable) wird von Limits.rows aktuell verworfen.
