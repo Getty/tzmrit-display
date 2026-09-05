@@ -1,0 +1,45 @@
+---
+claimed_at: 2026-09-04T23:12:38Z
+claimed_by: display
+class: standard
+completed: 2026-09-05T01:23:42Z
+created: 2026-09-04T23:07:38Z
+id: 11
+priority: medium
+started: 2026-09-05T01:23:42Z
+status: done
+tags:
+- render
+- claude
+- feature
+title: 'Session row: brighter memory + show the LLM model'
+updated: 2026-09-05T01:23:42Z
+---
+
+Two changes to the Claude session sub-line in render.py::_session_row:
+
+A) Memory sub-line was T.INK_FAINT (#4A5262), too dark for the maintainer -> T.INK_DIM (#8B94A6).
+B) Show the model used by the session next to the memory, separated by " · ".
+
+The model is NOT in ~/.claude/sessions/<pid>.json. Source is the transcript
+~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl: assistant lines carry
+message.model. Tail-read only (transcripts run to MBs, this is in the frame
+loop), scan backwards, skip isSidechain entries and the "<synthetic>" pseudo
+model. Short label: claude-opus-5 -> "opus 5".
+
+2026-09-04 23:12 Implemented, not committed.
+
+claude_sessions.py: Session.model (raw id) + Session.model_text (label);
+_model_label() short labels; _tail_model_id() reads only the last 64 KB and
+scans backwards, skipping isSidechain and <synthetic>; _transcript_model()
+globs by sessionId like _transcript_mtime, 60s TTL cache with eviction.
+render.py: sub-line is now memory + model joined by ' · ' in T.INK_DIM (was
+memory alone in T.INK_FAINT), clipped by the new _fit() against the same
+avail the name uses.
+
+Verified: pytest 198 passed, 0 skipped. Five mutations (drop sidechain guard,
+read whole file instead of tail, revert colour to INK_FAINT, drop <synthetic>
+guard, drop the clip) each turn a specific new test red. Live read of the 8
+real sessions on this box gives opus 5 / fable 5.1 / MiniMax-M3. Two preview
+PNGs inspected. Model lookup 0.7 ms per session uncached, once a minute.
+NOT verified: nothing on real panel hardware - none attached here.
