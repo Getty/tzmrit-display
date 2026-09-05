@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-09-04T23:25:42Z
+claimed_by: display
+class: standard
+completed: 2026-09-05T01:23:47Z
+created: 2026-09-04T23:25:31Z
+id: 14
+priority: medium
+started: 2026-09-05T01:23:47Z
+status: done
+tags:
+- render
+- claude
+- limits
+title: 'Limit bars: third scoped-weekly bar + stronger fill/track contrast'
+updated: 2026-09-05T01:23:47Z
+---
+
+C) parse_usage dropped the endpoint's weekly_scoped entries; Limits.scoped now carries all of them and Limits.rows orders session -> weekly_all -> scoped. Label is read from scope.model.display_name with the redundant "Claude " prefix stripped, falling back to the group slug and finally to "Model" - never a hardcoded model name, since which model the weekly scopes moves with the plan.
+
+D) The bar remainder went from _mix(SURFACE,ACCENT,0.75) (#4580C4) to 0.35 (#264365): the consumed/remaining step goes 1.62:1 -> 4.01:1. With a dark track one ink no longer serves both halves, so each label is now drawn twice on a bar-sized layer and split pixel-exactly at the fill edge - SURFACE (7.69:1) over the bright fill, INK (8.40:1) over the dark track. A label straddling the edge is the normal case, not a corner one.
+
+Also fixed a collision that change C made reachable: at four bars "Session 100%" + "10h05m" printed over each other. The countdown now gives way when the pair does not fit, and an over-long scoped name truncates while keeping its percentage.
+
+2026-09-04 23:25 Implemented, not committed. pytest 223 passed, 0 skipped (was 198).
+
+Contrast, measured not guessed:
+  consumed vs remaining  1.62 -> 4.01
+  track vs panel         4.75 -> 1.92 (chrome; the INK_FAINT rules beside it are 2.48)
+  dark ink on fill       7.69 (unchanged)
+  light ink on track     n/a  -> 8.40
+
+Six mutations each turn a specific test red: single ink instead of the split,
+remain back to t=0.75, dropping scoped from rows, hardcoding the model name,
+always drawing the countdown, not clipping the name.
+
+NOT verified: nothing on panel hardware - none attached. The scoped bar was
+exercised against the captured fixture (which still says Opus) and synthetic
+Fable/Sonnet payloads, never against a live 200 from the usage endpoint.
