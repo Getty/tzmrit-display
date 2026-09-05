@@ -1,0 +1,28 @@
+---
+class: standard
+created: 2026-09-04T23:08:25Z
+id: 13
+priority: medium
+status: backlog
+tags:
+- hardware
+- panel
+title: Panel verliert alle paar Minuten den Port (Errno 5), reconnect wechselt ttyACM0/1
+updated: 2026-09-05T01:24:37Z
+---
+
+journalctl --user -u tzmrit-display zeigt im Minutentakt:
+  panel lost: write failed: [Errno 5] Input/output error
+  waiting for the panel (polling every 3 s) -> panel port is back, reconnecting
+Die Portnummer springt zwischen /dev/ttyACM0 und ttyACM1, das Geraet enumeriert also am USB neu. Die Reconnect-Logik selbst funktioniert.
+
+DIAGNOSE-STAND 2026-09-05: die naheliegenden Software-Ursachen sind ausgeschlossen.
+- ModemManager: inactive. Der Klassiker bei neu auftauchenden ttyACM-Geraeten faellt damit aus.
+- Nur ein Prozess haelt den Port (ueber /proc/*/fd geprueft), also kein Mehrfachzugriff - trotz der Log-Zeile "multiple access on port?", die pyserial nur als Vermutung mitliefert.
+- USB-Autosuspend steht fuer das Geraet bereits auf power/control=on, greift also nicht.
+- Das Panel meldet bMaxPower 100mA bei 480 Mbps fuer ein 9,16-Zoll-LCD. Brownouts an einem passiven Hub oder schwachen Port sind damit die naheliegendste Erklaerung fuers Verschwinden und Neu-Enumerieren.
+- Nebenbefund: die udev-Regel aus systemd/ ist auf diesem Host gar nicht nach /etc/udev/rules.d/ installiert, der Zugriff laeuft ueber dialout. Fuer den Verlust irrelevant.
+
+OFFEN: Gegenprobe im Kernel-Log. dmesg ist hier per kernel.dmesg_restrict gesperrt. Kommt ein "USB disconnect" fuer Bus-Geraet 1-10 im selben Takt wie die "panel lost"-Zeilen, ist es die physische Ebene und nichts, was im Code zu reparieren waere.
+
+ERLEDIGT, separater Fund: die Alt-Unit display-panel.service aus der Zeit vor der Umbenennung war noch enabled und crashte seit 118942 Restarts alle 5s mit "No module named display_panel". Gestoppt und disabled; die Unit-Datei liegt noch in ~/.config/systemd/user/.
