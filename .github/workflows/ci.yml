@@ -8,12 +8,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # The Linux side is described by the job filenames in .cicd/ and runs through
+  # SimpiCI, so there is nothing about it to configure here.
+  simpici:
+    permissions:
+      contents: read
+      packages: write
+    uses: Getty/simpici/.github/workflows/simpici.yml@main
+
+  # Windows stays on Actions: SimpiCI runs every job in a Linux container, so
+  # neither this test run nor the NSIS installer below can move into .cicd/
+  # yet. Tracked as simpici#6.
+  test-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
         with:
@@ -26,7 +33,7 @@ jobs:
 
   installer:
     runs-on: windows-latest
-    needs: test
+    needs: [simpici, test-windows]
     permissions:
       contents: write  # upload the release asset on tag builds
     steps:
