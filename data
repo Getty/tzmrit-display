@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-09-14T22:12:35Z
+claimed_by: claude
+class: standard
+created: 2026-09-14T19:41:01Z
+id: 15
+priority: medium
+started: 2026-09-14T19:41:11Z
+status: review
+tags:
+- theme
+- cli
+title: Rotes Dashboard-Theme per CLI auswählbar machen
+updated: 2026-09-14T22:12:35Z
+---
+
+Ergänze --theme {blue,red} für run und preview. Blau bleibt Standard. Renderer verwendet instanzgebundene Paletten; rote Akzente bleiben von CRIT unterscheidbar. Tests und rote Preview gehören zum Abschluss.
+
+Rotes Theme per --theme {blue,red} für run/preview implementiert; blue bleibt Default. Frozen instanzgebundene Paletten, echte run/preview- und Runtime-Pixel-/Kontrasttests. 241 Tests bestanden, keine Skips/Warnings; beide Previews RGB 1920x462; git diff --check sauber. Kein physisches Panel vorhanden, Hardware unverifiziert.
+
+Visuelle LCD-Regression untersucht: Blue/Red-Geometrie pixelidentisch; dunkler Red-Fill verursachte scheinbaren Leerraum. Rot auf #E35454 und nur Red-Spark-Fill-Alpha auf 72 angehoben; Blue bleibt byteidentisch. 242 Tests bestanden, keine Skips/Warnings; unabhängiger Review sauber; Service neu gestartet und Panel auf /dev/ttyACM0 1920x462 verbunden. Bitte Sichtprüfung am echten Panel.
