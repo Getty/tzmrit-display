@@ -14,9 +14,10 @@ Six values, each with its recent history. Color appears only when something gets
 
 ![Claude sessions](docs/img/claude.png)
 
-With `--claude` the strip splits: the machine on the left, your running Claude Code
-sessions on the right — who is working, who is waiting on you, and what each one
-costs in memory. Up to **eight sessions** fit without truncation.
+With `--claude` the strip splits into a left third of four system metrics in 2×2
+cards (the value sits over each graph) and the right two thirds with two session
+lanes plus a utility column for Claude limits and HOST/DISK/UPTIME. Up to **ten
+sessions** fit without truncation.
 
 ---
 
@@ -132,7 +133,9 @@ tzmrit-display clear              # clear the panel
 
 `preview` is the fast path for layout work: it needs no hardware and does not
 hold the port, so you can iterate on the design while the monitor keeps running.
-`--claude` works there too.
+`--claude` works there too. Both `run` and `preview` accept `--theme {blue,red}`;
+blue is the default. `--theme red` switches the normal accent to red, and the
+working marker follows the selected accent rather than staying blue.
 
 ## View it in a browser (`--http`)
 
@@ -195,21 +198,25 @@ every running session current. No API, no login.
 
 | State | Rendering |
 |---|---|
-| `requires_action` | warning triangle, yellow, **"waiting for you"** — always sorted first |
-| `busy` | filled dot, blue, "working" + duration |
-| `idle` | hollow circle, dimmed, "ready" + duration |
+| `requires_action` / `waiting` | warning triangle, yellow, **"waiting for you"** — always sorted first |
+| `busy` | with fresh transcript activity, or while no transcript timestamp is available: a subtly pulsing filled marker with a visible core in the selected accent, "working"; with a known stale timestamp, it falls back to a static hollow circle, dimmed, "ready" + time since last activity |
+| `idle` | hollow static circle, dimmed, "ready" + time since last activity |
 
-Sorting is by urgency, not alphabetical: whatever waits on you comes first. Up to
-four sessions are set in one column, beyond that in two — so **eight** fit without
-truncation. Only from the ninth does a "+N more" row appear.
+Sorting is by urgency, not alphabetical: whatever waits on you comes first. Two
+session lanes hold five rows each, so **ten** sessions fit without truncation. A
+`+N more` row appears only from the eleventh.
 
 ### Memory
 
-Below each name sits the project and its **memory — including the MCP servers**
-that hang off the session as child processes. That is not a detail: measured on a
-real session, Claude itself accounts for 493 MB and 814 MB with its five MCP
-servers. Counting only the main process understates the footprint by roughly 40 %.
-The header carries the total across all sessions.
+Below each name, the session sub-line shows its memory — including the MCP
+servers that hang off the session as child processes — and, when available, the
+model of the most recently resolved assistant turn. When a session name is
+derived from its project and there is enough room, that project appears as a
+tinted prefix in the name instead of being repeated below. For very long names,
+the whole name may instead be truncated without tint. That is not a detail:
+measured on a real session, Claude itself accounts for 493 MB and 814 MB with its
+five MCP servers. Counting only the main process understates the footprint by
+roughly 40 %. The header carries the total across all sessions.
 
 Sampling happens every four seconds rather than every frame; a full walk across
 two sessions with 28 child processes costs about 9 ms, 0.3 ms from cache.

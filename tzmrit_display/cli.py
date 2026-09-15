@@ -65,8 +65,13 @@ def usage_poll_interval(sessions) -> float:
     return POLL_IDLE
 
 
-def _compose(src, renderer, with_claude):
-    """Build the image for the selected mode."""
+def _dashboard_renderer(args) -> DashboardRenderer:
+    """Make the renderer for a command's selected immutable color palette."""
+    return DashboardRenderer(scale=args.scale, theme=args.theme)
+
+
+def _compose(src, renderer, with_claude, pulse_phase=0):
+    """Build the image for the selected mode and explicit split pulse phase."""
     metrics = src.sample()
     if not with_claude:
         return renderer.render(metrics, src.footer())
@@ -82,7 +87,8 @@ def _compose(src, renderer, with_claude):
     # activity so a quiet board is polled far less than a busy one.
     limits = get_limits(usage_poll_interval(sessions))
     return renderer.render_split(chosen, sessions, summarize(sessions),
-                                 src.footer(), limits)
+                                 src.footer(), limits,
+                                 pulse_phase=pulse_phase)
 
 
 def _run_headless(src, renderer, args, server, stop_requested, wait) -> int:
@@ -104,7 +110,8 @@ def _run_headless(src, renderer, args, server, stop_requested, wait) -> int:
     frames = 0
     while not stop_requested():
         began = time.monotonic()
-        img = _compose(src, renderer, args.claude)
+        img = _compose(src, renderer, args.claude,
+                       pulse_phase=frames & 1)
         server.set_frame(img)
         frames += 1
         wait(max(0.0, args.interval - (time.monotonic() - began)))
@@ -132,11 +139,11 @@ def cmd_info(args) -> int:
 def cmd_preview(args) -> int:
     """Render a PNG without touching the hardware - handy for layout work."""
     src = SystemSource()
-    renderer = DashboardRenderer(scale=args.scale)
+    renderer = _dashboard_renderer(args)
     for _ in range(max(1, args.samples - 1)):
         src.sample()
         time.sleep(args.interval if args.samples > 1 else 0)
-    img = _compose(src, renderer, args.claude)
+    img = _compose(src, renderer, args.claude, pulse_phase=0)
     img.save(args.out)
     print(f"wrote {args.out} ({img.width}x{img.height})")
     return 0
@@ -216,7 +223,7 @@ def cmd_run(args) -> int:
         return 1
 
     src = SystemSource()
-    renderer = DashboardRenderer(scale=args.scale)
+    renderer = _dashboard_renderer(args)
     stop = False
 
     def handler(signum, frame):
@@ -301,7 +308,8 @@ def cmd_run(args) -> int:
                     frames, t_start, last_log = 0, time.monotonic(), time.monotonic()
                     while not stop_requested():
                         began = time.monotonic()
-                        img = _compose(src, renderer, args.claude)
+                        img = _compose(src, renderer, args.claude,
+                                       pulse_phase=total_frames & 1)
                         size = p.show(img)
                         if server is not None:
                             server.set_frame(img)
@@ -345,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="show the dashboard continuously")
     p_run.add_argument("--interval", type=float, default=1.0, help="seconds per frame (default 1.0)")
     p_run.add_argument("--scale", type=int, default=2, help="supersampling factor (default 2)")
+    p_run.add_argument("--theme", choices=("blue", "red"), default="blue",
+                       help="dashboard accent theme (default blue)")
     p_run.add_argument("--brightness", type=int, default=None)
     p_run.add_argument("--blank-on-exit", action="store_true", help="clear the panel on exit")
     p_run.add_argument("--claude", action="store_true",
@@ -367,6 +377,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_prev = sub.add_parser("preview", help="render a PNG without using the panel")
     p_prev.add_argument("-o", "--out", default="preview.png")
     p_prev.add_argument("--scale", type=int, default=2)
+    p_prev.add_argument("--theme", choices=("blue", "red"), default="blue",
+                        help="dashboard accent theme (default blue)")
     p_prev.add_argument("--samples", type=int, default=1, help="samples to collect first")
     p_prev.add_argument("--interval", type=float, default=0.3)
     p_prev.add_argument("--claude", action="store_true", help="split layout with Claude sessions")
