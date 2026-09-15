@@ -1,0 +1,18 @@
+---
+claimed_at: 2026-09-15T02:48:29Z
+claimed_by: claude
+class: standard
+created: 2026-09-15T02:48:25Z
+id: 16
+priority: high
+started: 2026-09-15T02:48:29Z
+status: in-progress
+tags:
+- layout
+- render
+- claude
+title: Claude-Splitansicht als 1/3–2/3-Raster neu gestalten
+updated: 2026-09-15T02:48:29Z
+---
+
+Links vier Systemmetriken als 2x2-Karten mit Wert im Graphen. Rechts zwei Session-Lanes plus Utility-Spalte für Limits und Host-Fakten. Arbeitende Sessionmarker pulsieren dezent per expliziter Framephase. TDD, Preview und Live-Panel-Sichtprüfung.
