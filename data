@@ -1,0 +1,23 @@
+---
+class: standard
+created: 2026-09-17T16:54:12Z
+id: 17
+priority: medium
+status: backlog
+tags:
+- tests
+- flaky
+- ci
+title: 'Flaky test: TestGetLimits.test_background_refresh_populates_cache'
+updated: 2026-09-17T16:54:12Z
+---
+
+Found during the v0.4.0 release audit. tests/test_claude_limits.py::TestGetLimits::test_background_refresh_populates_cache failed once in GitHub Actions CI (run 35013213856, main push, commit e7b302c) with:
+
+    AssertionError: assert None is Limits(session=Limit(label="Session", percent=42, ...))
+
+288 passed, 1 failed in that CI run. Locally (./.venv/bin/pytest) and in the tag-triggered CI run for v0.4.0, the full 289-test suite passed clean on the same commit, so this is intermittent, not a hard failure.
+
+The test spins up get_limits() background refresh and polls cl._cache["value"] for up to 2.0s (0.01s sleep loop) before asserting it was populated by the monkeypatched fetch(). On a loaded runner the background thread can miss that window — either the poll timeout needs headroom or there is a real race in claude_limits.py's background-refresh path (e.g. the thread not starting/finishing within the assumed budget under contention). Needs a worker to reproduce reliably (loop the test N times under load) and fix the timing assumption or the underlying race, then leave a regression that does not rely on wall-clock polling if possible.
+
+Not release-blocking for v0.4.0 itself (already tagged/published), but should be fixed before the "pytest green" gate is trusted for the next release.
