@@ -14,7 +14,7 @@ yourself — the principle, the lane and the hardware hazards are in
 | Task | Agent |
 |---|---|
 | Implement / refactor / debug / test code under `tzmrit_display/` or `tests/` | `tzmrit-display-worker` (default) |
-| Cross-cutting release audit (version, deps, changes) | `tzmrit-display-release-checker` |
+| Cross-cutting release audit (version, deps, changes) | `tzmrit-display-release-manager` |
 | Linux release chain (sdist/wheel, systemd, udev) | `tzmrit-display-release-linux` |
 | Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
 
@@ -25,7 +25,7 @@ The agents carry their knowledge via `briefing.skills` (see `.claude/agents/`);
 the main agent delegates rather than loading those skills. Architecture, hardware
 invariants and repo conventions live in skill `tzmrit-display-core`; the two release
 pipelines in `tzmrit-display-packaging`; the karr command surface in
-`kanban-issues-karr-cli` (all under `.claude/skills/`).
+`kanban-issues-karr-coordination` (all under `.claude/skills/`).
 
 ## Verify
 

@@ -33,7 +33,7 @@ This rule depends on whether the Agent/Task tool is available to you.
 
 - **You can spawn subagents** (orchestrating main agent): Do NOT touch
   behavior-relevant code yourself — delegate to `tzmrit-display-worker`. Your lane:
-  coordinate, inspect, plan, review diffs, run tests, manage git, edit non-behavioral
+  coordinate, inspect, plan, review diffs, run tests, edit non-behavioral
   docs. When in doubt, delegate. Why: only the `tzmrit-display-*` agents get their
   skills force-loaded via `briefing.skills`; you get no briefing and would touch the
   wire protocol / render engine with too little context.
@@ -41,7 +41,7 @@ This rule depends on whether the Agent/Task tool is available to you.
   | Task | Agent |
   |---|---|
   | Implement / refactor / debug / test code | `tzmrit-display-worker` (default) |
-  | Cross-cutting pre-release audit (version, deps, changes) | `tzmrit-display-release-checker` |
+  | Cross-cutting pre-release audit (version, deps, changes) | `tzmrit-display-release-manager` |
   | Linux release chain (build, systemd, udev) | `tzmrit-display-release-linux` |
   | Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
 
@@ -56,16 +56,19 @@ Behavior-relevant = anything under `tzmrit_display/` and `tests/`: the wire prot
 the render pipeline, metric sources, session detection, the CLI, error handling,
 performance. Pure prose docs (`README.md`, `docs/*.md`) and changelog notes are not.
 
+**Only `tzmrit-display-release-manager` commits.** A worker leaves a commit-ready tree and hands its card
+to `review`; you then dispatch `tzmrit-display-release-manager` to cut the commit and close the card.
+
 ## Coordination — karr board (always in scope)
 
 Ticket coordination is the orchestrating agent's job, so `karr` is always in scope —
-don't invoke the `kanban-issues-karr-cli` skill first, just use it. Git-native kanban;
+don't invoke the `kanban-issues-karr-coordination` skill first, just use it. Git-native kanban;
 state lives in `refs/karr/*`; this repo has its own board. Day-to-day:
 
 - `karr list --compact` / `karr board` — open work · `karr show ID` — detail
 - `karr create "Title" --priority high --tags a,b --body '…'` — new ticket
 - `karr move ID in-progress --claim NAME` — start · `karr handoff ID --claim NAME --note "…"` — to review
-- mutating commands auto-sync. Full surface: skill `kanban-issues-karr-cli`.
+- mutating commands auto-sync. Full surface: skill `kanban-issues-karr-coordination`.
 
 **Serialize board mutations when fanning out.** Keep implementation parallel if you
 like, but collect the results and then loop `karr move`/`handoff`/`sync`
