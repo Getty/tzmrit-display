@@ -2,7 +2,6 @@
 name: tzmrit-display-worker
 description: "Default tzmrit-display worker — implement, refactor, debug, and test code in this repo (the HONGTAI USB LCD driver and system monitor). Pre-loaded with the tzmrit-display architecture, hardware invariants and repo conventions. Everything behavior-relevant goes here. Leaves a commit-ready tree; never commits — commits belong to tzmrit-display-release-manager."
 model: inherit
-allowed-tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
     - tzmrit-display-core
