@@ -269,7 +269,10 @@ _TTL = 60.0
 _BACKOFF_BASE = 60.0     # first extra spacing after one failure
 _BACKOFF_CAP = 1800.0    # 30 min ceiling (n>=7 sits here)
 _lock = threading.Lock()
-_cache: dict[str, object] = {"at": 0.0, "value": None}
+# "Never fetched". Not 0.0: time.monotonic() counts from boot, so for the first
+# TTL seconds after a (re)boot 0.0 would look fresh and suppress the fetch.
+_NEVER = float("-inf")
+_cache: dict[str, object] = {"at": _NEVER, "value": None}
 _fetching = False
 _fail_count = 0          # consecutive refreshes that returned None
 

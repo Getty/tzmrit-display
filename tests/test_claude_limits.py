@@ -244,7 +244,7 @@ class TestFetch:
 
 class TestGetLimits:
     def _reset(self):
-        cl._cache["at"] = 0.0
+        cl._cache["at"] = cl._NEVER
         cl._cache["value"] = None
         cl._fetching = False
         cl._fail_count = 0
@@ -259,6 +259,15 @@ class TestGetLimits:
             time.sleep(0.01)
         assert cl._cache["value"] is sentinel
         assert get_limits() is sentinel  # fresh cache, returned directly
+
+    def test_first_call_fetches_right_after_boot(self, monkeypatch):
+        # time.monotonic() counts from boot, so a freshly started host (or CI
+        # runner) sits below the TTL -- the empty cache must still refresh.
+        self._reset()
+        monkeypatch.setattr(cl.time, "monotonic", lambda: 5.0)
+        monkeypatch.setattr(cl, "_refresh", lambda: None)
+        get_limits()
+        assert cl._fetching
 
     def test_fresh_cache_does_not_refetch(self, monkeypatch):
         self._reset()
@@ -278,7 +287,7 @@ class TestBackoff:
     the polling off exponentially; the first success clears it."""
 
     def _reset(self):
-        cl._cache["at"] = 0.0
+        cl._cache["at"] = cl._NEVER
         cl._cache["value"] = None
         cl._fetching = False
         cl._fail_count = 0
