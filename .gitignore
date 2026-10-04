@@ -42,3 +42,7 @@ packaging/*.exe
 # karr materialized task view -- never commit
 tasks/
 config.yml
+
+# skilletor: Config und Ignore-Block committen
+!.claude/skilletor.json
+!.claude/.gitignore
