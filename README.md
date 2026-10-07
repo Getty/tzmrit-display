@@ -6,6 +6,8 @@
 
 For the **TZMRIT 9.16"** and compatible HONGTAI panels, which otherwise only the vendor's Windows application can drive.
 
+**Works without the panel, too:** the same picture as a web page (`--http`) or as a PNG file.
+
 </div>
 
 ![Board: drives, CPU/RAM/NET, the Claude sessions of three machines, two accounts' limits](docs/img/board.png)
