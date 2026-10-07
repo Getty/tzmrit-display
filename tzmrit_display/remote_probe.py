@@ -76,6 +76,15 @@ def is_live(pid, expected_start):
         if fields is None or len(fields) < 20:
             return False
         return expected_start is None or str(expected_start) == fields[19]
+    if os.name == "nt":
+        # Never os.kill(pid, 0) here: on Windows signal 0 is CTRL_C_EVENT, so
+        # the "does it exist" idiom interrupts the process instead of asking.
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
     try:
         os.kill(pid, 0)
         return True
