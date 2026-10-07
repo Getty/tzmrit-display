@@ -26,10 +26,25 @@ tzmrit-display service install --hosts reuben,pikachu
 ([installer](https://github.com/Getty/tzmrit-display/releases/latest), then
 [Running it permanently](#running-it-permanently).)
 
+**No panel? It is also just a picture.** Every view is rendered as a plain
+1920 × 462 image, and the panel is only one place it can go:
+
+```bash
+tzmrit-display run --hosts reuben,pikachu --http 8080 --no-panel   # web server, no panel attached
+tzmrit-display preview --board -o board.png                        # one PNG, then exit
+```
+
+The first serves a self-refreshing page at `http://<host>:8080/` and the
+current frame at `/frame.png` — for a browser tab, a wall display, or anything
+that can show an image. With a panel attached, `--http` runs alongside it. See
+[View it in a browser](#view-it-in-a-browser---http).
+
 ![System monitor](docs/img/dashboard.png)
 
-**The system monitor** (`run`): six values, each with its recent history. Color
-appears only when something gets out of hand.
+**The system monitor** (`run`): the values that matter, each with its recent
+history — six columns on Linux, five on Windows (as here), where there is no
+temperature sensor or load average to read. Color appears only when something
+gets out of hand.
 
 ![Claude sessions](docs/img/claude.png)
 

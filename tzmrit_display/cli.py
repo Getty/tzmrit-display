@@ -247,7 +247,7 @@ def cmd_preview(args) -> int:
     if remotes is not None:
         args.board = True
         remotes.wait_first(PREVIEW_HOST_WAIT)
-    if args.board:
+    if args.board or args.claude:
         # One shot, so give the off-thread usage fetch a moment to land -
         # `run` just shows the bars a frame or two later.
         deadline = time.monotonic() + PREVIEW_LIMITS_WAIT
