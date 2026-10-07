@@ -147,8 +147,5 @@ on Linux — but angle=90 hardware has never been seen.
   it was started with `--log-file` (the autostart task does that). If the
   panel stays dark, run `tzmrit-display.exe run -v` (the console twin) once to
   see why.
-* `service install` was run from a checkout (`pythonw.exe -m tzmrit_display`).
-  The frozen build takes the other branch of `service.launcher()` and has not
-  been tried.
 * The task has been started by hand and by `service install`; an actual logoff
   and logon has not been observed yet.

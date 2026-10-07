@@ -91,6 +91,7 @@ Afterwards the Start menu has a **TZMRIT Display** folder:
 |---|---|
 | **TZMRIT Display** | start the system dashboard |
 | **TZMRIT Display (Claude sessions)** | start the split view with your Claude sessions |
+| **TZMRIT Display (Board)** | start the board: drives, CPU/RAM/NET, sessions, limits |
 | **Stop TZMRIT Display** | stop whichever dashboard is running |
 | **Uninstall** | remove everything (also listed in *Apps & Features*) |
 
@@ -241,6 +242,9 @@ needs no admin rights. `service status`, `start`, `stop`, `restart` and
 running dashboard follows it. Leave `--hosts` out to keep the file as it is.
 The log is `%LOCALAPPDATA%\tzmrit-display\dashboard.log`. Why this is a logon
 task and not an entry in the Services console: [docs/windows.md](docs/windows.md).
+
+With the installer the program is not on `PATH`; run it as
+`"%LOCALAPPDATA%\Programs\tzmrit-display\tzmrit-display.exe" service install ...`.
 
 For the plain views the installer's autostart choice (or `install.bat`'s
 Startup shortcut) does the same job; `service install` replaces that shortcut.

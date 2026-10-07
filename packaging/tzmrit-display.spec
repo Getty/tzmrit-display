@@ -65,7 +65,11 @@ def _versioninfo(description):
 a = Analysis(
     ["launcher.py"],
     pathex=[".."],
-    datas=[("../tzmrit_display/fonts", "tzmrit_display/fonts")],
+    # remote_probe.py is shipped as a file on purpose: remote_hosts pipes its
+    # *source* to python3 on the other machine, and a frozen build keeps
+    # modules only as bytecode inside the archive.
+    datas=[("../tzmrit_display/fonts", "tzmrit_display/fonts"),
+           ("../tzmrit_display/remote_probe.py", "tzmrit_display")],
     hiddenimports=[],
     excludes=["tkinter"],
     noarchive=False,

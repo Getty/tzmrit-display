@@ -76,6 +76,8 @@ Section "${APPNAME_DISPLAY} (required)" SecCore
                  "$INSTDIR\tzmrit-displayw.exe" "run"
   CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\${APPNAME_DISPLAY} (Claude sessions).lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "run --claude"
+  CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\${APPNAME_DISPLAY} (Board).lnk" \
+                 "$INSTDIR\tzmrit-displayw.exe" "run --board"
   ; windowed variant so stopping never flashes a console
   CreateShortcut "$SMPROGRAMS\${APPNAME_DISPLAY}\Stop ${APPNAME_DISPLAY}.lnk" \
                  "$INSTDIR\tzmrit-displayw.exe" "stop"
@@ -159,6 +161,9 @@ FunctionEnd
 ; -- uninstall ---------------------------------------------------------------
 
 Section "Uninstall"
+  ; the logon task of `tzmrit-display service install`, if any - first, or it
+  ; would restart the dashboard that is killed next
+  nsExec::Exec 'schtasks /Delete /TN "${APPNAME_DISPLAY}" /F'
   nsExec::Exec 'taskkill /f /im tzmrit-displayw.exe'
   nsExec::Exec 'taskkill /f /im tzmrit-display.exe'
   Sleep 500
