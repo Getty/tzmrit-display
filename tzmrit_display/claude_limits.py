@@ -35,7 +35,7 @@ import json
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,6 +78,18 @@ class Limits:
     session: Limit | None = None
     weekly: Limit | None = None
     scoped: list[Limit] = field(default_factory=list)
+    # A reading that could not be renewed is kept and marked instead of being
+    # dropped: bars that blink out on every failed poll say less than old ones
+    # drawn as old. `as_of` is the wall-clock time the reading was taken.
+    stale: bool = False
+    as_of: float | None = None
+
+    def age_text(self, now: float | None = None) -> str:
+        """How old the reading is ('12m', '2h05m'); '' when unknown."""
+        if self.as_of is None:
+            return ""
+        age = (time.time() if now is None else now) - self.as_of
+        return "<1m" if age < 60 else _fmt_reset(age)
 
     @property
     def rows(self) -> list[Limit]:
@@ -88,6 +100,52 @@ class Limits:
         the specialisation, so they close the row.
         """
         return [x for x in (self.session, self.weekly) if x is not None] + list(self.scoped)
+
+
+@dataclass
+class AccountLimits:
+    """The limits of one Claude account, titled with who it belongs to.
+
+    One board can show sessions of several accounts (remote_hosts); each then
+    gets its own block of bars. `limits` is None while nothing could be read -
+    the block keeps its title so the layout does not jump.
+    """
+
+    name: str
+    limits: Limits | None = None
+
+
+_ACCOUNT_TTL = 600.0
+_account: dict[str, object] = {"at": float("-inf"), "value": ("", "")}
+
+
+def local_account(path: Path | None = None) -> tuple[str, str]:
+    """(email, display name) of the account Claude Code is logged into here.
+
+    Read from `~/.claude.json` (`oauthAccount`), which holds no secret. Both
+    are "" when it cannot be read. Cached: the file is large and the answer
+    changes only on /login.
+    """
+    now = time.monotonic()
+    if path is None and now - float(_account["at"]) < _ACCOUNT_TTL:
+        return _account["value"]  # type: ignore[return-value]
+    value = ("", "")
+    try:
+        data = json.loads((path or Path.home() / ".claude.json").read_text(encoding="utf-8"))
+        account = data.get("oauthAccount")
+        if isinstance(account, dict):
+            value = (str(account.get("emailAddress") or ""),
+                     str(account.get("displayName") or ""))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    if path is None:
+        _account["at"], _account["value"] = now, value
+    return value
+
+
+def account_title(email: str, name: str) -> str:
+    """Short block title for an account: its display name, else the mailbox."""
+    return (name or email.split("@")[0] or "Limits").strip().upper()
 
 
 # -- parsing (pure) ------------------------------------------------------
@@ -211,7 +269,8 @@ def _fmt_reset(seconds: float) -> str:
     if seconds < 86400:
         hours, rest = divmod(seconds, 3600)
         return f"{hours}h{rest // 60:02d}m"
-    return f"{seconds // 86400}d"
+    days, rest = divmod(seconds, 86400)
+    return f"{days}d {rest // 3600}h"
 
 
 # -- fetching (network) --------------------------------------------------
@@ -258,7 +317,50 @@ def fetch() -> Limits | None:
         # Offline, DNS, TLS, 4xx/5xx, malformed JSON -- all fail silent, and
         # the broad catch also keeps a token out of any propagating traceback.
         return None
-    return parse_usage(payload)
+    limits = parse_usage(payload)
+    if limits is not None:
+        _remember(payload)
+    return limits
+
+
+# -- the last reading, kept across restarts ------------------------------
+#
+# A freshly started dashboard has nothing to show until its first fetch lands,
+# and a restart is exactly when the endpoint tends to answer 429. The last good
+# response is therefore kept on disk and shown, marked stale, until a new one
+# arrives. It holds percentages and reset times, never the token.
+
+_STORE_NAME = "limits.json"
+_STORE_MAX_AGE = 7 * 86400.0   # every window has reset by then: nothing to show
+
+
+def _store_path() -> Path:
+    from .runtime import runtime_dir
+    return runtime_dir() / _STORE_NAME
+
+
+def _remember(payload: object) -> None:
+    try:
+        _store_path().write_text(
+            json.dumps({"at": time.time(), "usage": payload}), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _recall(now: float | None = None) -> Limits | None:
+    """The last stored reading as stale Limits, or None."""
+    try:
+        data = json.loads(_store_path().read_text(encoding="utf-8"))
+        taken = float(data["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    now = time.time() if now is None else now
+    if not 0 <= now - taken <= _STORE_MAX_AGE:
+        return None
+    limits = parse_usage(data.get("usage"))
+    if limits is not None:
+        limits.stale, limits.as_of = True, taken
+    return limits
 
 
 # -- cached, off-thread access ------------------------------------------
@@ -300,18 +402,28 @@ def _refresh() -> None:
         value = None
     with _lock:
         _cache["at"] = time.monotonic()
-        _cache["value"] = value
         if value is None:
             _fail_count += 1     # back off; the common cause is the 429 above
+            # Keep the last good reading, marked stale. A new object, so a
+            # frame already holding the old one is not changed under it.
+            last = _cache["value"]
+            if isinstance(last, Limits) and not last.stale:
+                _cache["value"] = replace(last, stale=True)
+            elif last is None:
+                _cache["value"] = _recall()   # nothing yet: the stored one
         else:
             _fail_count = 0      # a good fetch clears the backoff at once
+            if isinstance(value, Limits) and value.as_of is None:
+                value.as_of = time.time()
+            _cache["value"] = value
         _fetching = False
 
 
 def get_limits(ttl: float = _TTL) -> Limits | None:
     """Most recent limits, refreshing in the background. Never blocks.
 
-    Returns the cached value at once (None until the first fetch lands). When
+    Returns the cached value at once (None until the first fetch lands). After
+    a failed refresh that is the last good reading with `stale` set. When
     the cache is older than the effective interval and no fetch is already
     running, a daemon thread is spawned to refresh it -- so the render loop is
     never held up by the HTTP round-trip. The effective interval is the larger

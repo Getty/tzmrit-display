@@ -167,7 +167,8 @@ class TestFormatting:
     @pytest.mark.parametrize("seconds,expected", [
         (0, "now"), (-30, "now"), (59, "0m"), (600, "10m"),
         (3600, "1h00m"), (4800, "1h20m"), (7300, "2h01m"),
-        (86400, "1d"), (2 * 86400, "2d"), (9 * 86400, "9d"),
+        (86400, "1d 0h"), (2 * 86400 + 3599, "2d 0h"), (6 * 86400 + 4 * 3600, "6d 4h"),
+        (9 * 86400 + 23 * 3600, "9d 23h"),
     ])
     def test_reset_format(self, seconds, expected):
         assert _fmt_reset(seconds) == expected

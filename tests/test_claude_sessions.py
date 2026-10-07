@@ -125,6 +125,7 @@ class TestListSessions:
 class TestSessionFields:
     def test_project_is_last_path_element(self):
         assert Session(1, "n", "/home/user/dev/karr/", "idle", "x").project == "karr"
+        assert Session(1, "n", r"C:\Users\u\Share\karr", "idle", "x").project == "karr"
 
     # Both the current ("waiting", Claude Code >= 2.1.251) and the legacy
     # ("requires_action") spellings map to the same waiting-for-human state.
@@ -485,6 +486,24 @@ class TestWindowsTicks:
         monkeypatch.setattr(cs, "WINDOWS", True)
         utc_ticks = cs._windows_start_ticks(os.getpid())[1]
         assert cs._is_live(os.getpid(), str(utc_ticks))
+
+    def test_filetime_reading_is_accepted_too(self, monkeypatch):
+        """Claude Code 2.1.29x writes a FILETIME (ticks since 1601, UTC), not
+        .NET ticks. Captured from a live session on Windows 11: procStart
+        134358218750129363 for a process started at epoch 1791348275.01."""
+        from tzmrit_display import claude_sessions as cs
+        monkeypatch.setattr(cs, "LINUX", False)
+        monkeypatch.setattr(cs, "WINDOWS", True)
+
+        class Proc:
+            def __init__(self, pid):
+                pass
+
+            def create_time(self):
+                return 1791348275.0129363
+
+        monkeypatch.setattr(cs.psutil, "Process", Proc)
+        assert cs._is_live(76508, "134358218750129363")
 
     def test_recycled_pid_is_dropped(self, tmp_path, monkeypatch):
         """A parseable but wrong tick count means: different process."""

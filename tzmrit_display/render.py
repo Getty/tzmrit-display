@@ -7,6 +7,8 @@ Two views share the same building blocks:
 
   render()        six metric columns across the full width
   render_split()  four metrics on the left, running Claude sessions on the right
+  render_board()  drives and three metrics on the left, sessions in the middle,
+                  the limits of every Claude account on the right
 
 Drawing happens with supersampling because PIL has no antialiased lines;
 without it every sparkline comes out ragged.
@@ -46,15 +48,34 @@ _SPLIT_LIMIT_STEP = 36
 _SPLIT_FOOTER_Y = (334, 366, 398)
 _SPLIT_FOOTER_VALUE_X = 1670
 
+# The board view keeps the split view's session lanes and utility column and
+# rearranges only the left third: one tall drives card beside three short
+# metric cards.
+_BOARD_DRIVES = (34, 94, 315, 432)
+_BOARD_CARDS = (
+    (331, 94, 612, 198),
+    (331, 211, 612, 315),
+    (331, 328, 612, 432),
+)
+_BOARD_BAR_Y = 138
+_BOARD_BAR_STEP = 36
+_BOARD_DRIVE_SLOTS = 8
+# Bars per account block, by how many accounts share the utility column.
+_BOARD_ACCOUNT_ROWS = {1: 7, 2: 3, 3: 2}
+# Past ten sessions the board switches its lanes to one-line rows: half the
+# step, so twice the sessions fit before anything is cut.
+_BOARD_DENSE_STEP = 29
+_BOARD_DENSE_ROWS = 10
+
 
 def _color(status: str, palette: T.Palette) -> str:
     return {"warn": palette.warn, "crit": palette.crit}.get(status, palette.accent)
 
 
 def _mix(hex_a: str, hex_b: str, t: float) -> tuple[int, int, int]:
-    """Blend two #RRGGBB colors, t=0 -> a, t=1 -> b."""
-    a = tuple(int(hex_a[i:i + 2], 16) for i in (1, 3, 5))
-    b = tuple(int(hex_b[i:i + 2], 16) for i in (1, 3, 5))
+    """Blend two colors (#RRGGBB or an RGB tuple), t=0 -> a, t=1 -> b."""
+    a, b = (c if isinstance(c, tuple) else
+            tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in (hex_a, hex_b))
     return tuple(round(a[k] + (b[k] - a[k]) * t) for k in range(3))
 
 
@@ -71,17 +92,20 @@ def _inactive_color(seconds: float, palette: T.Palette):
     return palette.ink_faint
 
 
-def _spark_points(metric, x0, y0, w, h):
+def _spark_points(metric, x0, y0, w, h, top=None):
     """Map a history into pixel coordinates.
 
     Without a fixed scale the values are scaled from the history, but against
     a floor - otherwise the curve zooms into quiet readings and presents noise
-    as a dramatic trend.
+    as a dramatic trend. `top` overrides the scale, for two curves that must
+    share one.
     """
     data = list(metric.history)
     if len(data) < 2:
         return []
-    if metric.scale_max is not None:
+    if top is not None:
+        pass
+    elif metric.scale_max is not None:
         top = metric.scale_max
     else:
         floor = 1e5 if metric.key.startswith("net") else 1.0
@@ -99,17 +123,31 @@ class DashboardRenderer:
         self.scale = max(1, scale)
         self.palette = T.palette(theme)
         self._bar_remain = _mix(self.palette.surface, self.palette.accent, 0.35)
+        # Second and third bar families of the board view (network drives, a
+        # second and third Claude account): same construction as the accent
+        # bar - a fill and a track at t=0.35 towards it.
+        self._bar_families = (
+            (self.palette.accent, self._bar_remain),
+            (self.palette.accent_warm,
+             _mix(self.palette.surface, self.palette.accent_warm, 0.35)),
+            (self.palette.ink_dim,
+             _mix(self.palette.surface, self.palette.ink_dim, 0.35)),
+        )
         self._pulse_halo = _mix(self.palette.surface, self.palette.accent, 0.30)
         s = self.scale
         self.f_label = T.font(T.FONT_LABEL, 23 * s)
         self.f_value = T.font(T.FONT_VALUE, 74 * s)
         self.f_value_sm = T.font(T.FONT_VALUE, 56 * s)
+        self.f_value_xs = T.font(T.FONT_VALUE, 36 * s)
+        self.f_value_net = T.font(T.FONT_VALUE, 24 * s)
         self.f_unit = T.font(T.FONT_UNIT, 25 * s)
         self.f_clock = T.font(T.FONT_VALUE, 40 * s)
         self.f_small = T.font(T.FONT_TEXT, 21 * s)
         self.f_foot_key = T.font(T.FONT_LABEL, 19 * s)
         self.f_session = T.font(T.FONT_LABEL, 29 * s)
         self.f_session_sub = T.font(T.FONT_TEXT, 22 * s)
+        self.f_session_dense = T.font(T.FONT_LABEL, 22 * s)
+        self.f_session_dense_sub = T.font(T.FONT_TEXT, 19 * s)
 
     # -- small drawing primitives ----------------------------------------
 
@@ -138,8 +176,8 @@ class DashboardRenderer:
                      x + size / 2 + size * 0.05, y + h * 0.66],
                     fill=background or self.palette.surface)
 
-    def _sparkline(self, base, d, metric, x, y, w, h, color):
-        pts = _spark_points(metric, x, y, w, h)
+    def _sparkline(self, base, d, metric, x, y, w, h, color, top=None):
+        pts = _spark_points(metric, x, y, w, h, top)
         if len(pts) < 2:
             return
         s = self.scale
@@ -247,7 +285,7 @@ class DashboardRenderer:
             d.text((fx + d.textlength(key, font=self.f_foot_key) + 14 * s, y - 2 * s),
                    val, font=self.f_small, fill=self.palette.ink_dim)
 
-    def _name_segments(self, d, name, project, avail):
+    def _name_segments(self, d, name, project, avail, font=None):
         """Split a session name into draw segments that fit within `avail` px.
 
         Returns a list of (text, is_prefix) pairs. For a derived name (one that
@@ -259,7 +297,7 @@ class DashboardRenderer:
         right-truncating the whole name as one base-colored segment - which is
         also how a non-derived name is always handled.
         """
-        font = self.f_session
+        font = font or self.f_session
 
         def tl(t):
             return d.textlength(t, font=font)
@@ -354,14 +392,71 @@ class DashboardRenderer:
         # prefix. An unknown model simply drops out, leaving the memory where it
         # already was, so the line never shifts. Clipped against the same
         # `avail` as the name so it cannot run into the status word either.
-        sub = " · ".join(t for t in (sess.memory_text, sess.model_text) if t)
+        # On a multi-host board the host leads the line - it is the one fact
+        # that tells two equally named sessions apart.
+        sub = " · ".join(t for t in (sess.host, sess.memory_text, sess.model_text) if t)
         if sub:
             d.text((name_x, y + 30 * s), self._fit(d, sub, self.f_session_sub, avail),
                    font=self.f_session_sub, fill=self.palette.ink_dim)
         d.text((right, y), sess.status_text, font=self.f_session_sub, fill=color, anchor="ra")
 
-    def _split_sessions(self, d, sessions, summary, pulse_phase=0):
-        """Render at most ten deterministic slots across two five-row lanes."""
+    def _session_row_dense(self, d, sess, x, w, y, pulse_phase=0):
+        """One session on a single line: age, marker, name, host, status.
+
+        The same encodings as _session_row at half the height. What gives way
+        is the sub-line's memory and model; the host stays, because on a board
+        this full it is what tells the rows apart.
+        """
+        s = self.scale
+        if sess.waiting:
+            color = self.palette.warn
+        elif sess.working:
+            color = self.palette.accent
+        else:
+            color = self.palette.ink_faint
+        sub = self.f_session_dense_sub
+        cy = y + 13 * s
+        gut = 52 * s
+        d.text((x + gut - 10 * s, cy), sess.inactive_text, font=sub,
+               fill=_inactive_color(sess.inactive_seconds, self.palette), anchor="rm")
+
+        mk = x + gut
+        if sess.waiting:
+            self._warning_mark(d, mk, y + 5 * s, 17 * s, color)
+        elif sess.working:
+            cx = mk + 8 * s
+            if pulse_phase:
+                d.ellipse([cx - 8 * s, cy - 8 * s, cx + 8 * s, cy + 8 * s],
+                          fill=self._pulse_halo)
+            d.ellipse([cx - 5 * s, cy - 5 * s, cx + 5 * s, cy + 5 * s], fill=color)
+        else:
+            r = 6 * s
+            d.ellipse([mk + 2 * s, cy - r, mk + 2 * s + 2 * r, cy + r],
+                      outline=color, width=max(1, 2 * s))
+
+        name_x = mk + 28 * s
+        right = x + w
+        d.text((right, cy), sess.status_text, font=sub, fill=color, anchor="rm")
+        edge = right - d.textlength(sess.status_text, font=sub) - 12 * s
+        if sess.host:
+            host = self._fit(d, sess.host, sub, 130 * s)
+            d.text((edge, cy), host, font=sub, fill=self.palette.ink_faint, anchor="rm")
+            edge -= d.textlength(host, font=sub) + 12 * s
+
+        base = self.palette.ink if (sess.waiting or sess.working) else self.palette.ink_dim
+        seg_x = name_x
+        for text, is_prefix in self._name_segments(
+                d, sess.name, sess.project, edge - name_x, self.f_session_dense):
+            d.text((seg_x, cy), text, font=self.f_session_dense, anchor="lm",
+                   fill=self.palette.accent_warm if is_prefix else base)
+            seg_x += d.textlength(text, font=self.f_session_dense)
+
+    def _split_sessions(self, d, sessions, summary, pulse_phase=0, dense=False):
+        """Render at most ten deterministic slots across two five-row lanes.
+
+        With `dense` (the board view) more than ten sessions switch both lanes
+        to one-line rows, twenty slots instead of ten.
+        """
         s = self.scale
         x0 = _SPLIT_SESSION_LANES[0][0] * s
         d.text((x0, T.TILE_TOP * s), "CLAUDE", font=self.f_label,
@@ -373,6 +468,26 @@ class DashboardRenderer:
         if not sessions:
             d.text((x0, (_SPLIT_SESSION_Y + 15) * s), "no sessions running",
                    font=self.f_session_sub, fill=self.palette.ink_faint)
+            return
+
+        if dense and len(sessions) > 10:
+            slots = 2 * _BOARD_DENSE_ROWS
+            shown = sessions[:slots - 1] if len(sessions) > slots else sessions
+            for index, session in enumerate(shown):
+                lane, row = divmod(index, _BOARD_DENSE_ROWS)
+                left, right = _SPLIT_SESSION_LANES[lane]
+                self._session_row_dense(
+                    d, session, left * s, (right - left) * s,
+                    (_SPLIT_SESSION_Y + row * _BOARD_DENSE_STEP) * s,
+                    pulse_phase=pulse_phase,
+                )
+            if len(sessions) > len(shown):
+                left, _ = _SPLIT_SESSION_LANES[1]
+                y = _SPLIT_SESSION_Y + (_BOARD_DENSE_ROWS - 1) * _BOARD_DENSE_STEP
+                d.text(((left + 80) * s, (y + 13) * s),
+                       f"+{len(sessions) - len(shown)} more",
+                       font=self.f_session_dense_sub, fill=self.palette.ink_faint,
+                       anchor="lm")
             return
 
         if len(sessions) > 10:
@@ -431,7 +546,7 @@ class DashboardRenderer:
 
         return self._finish(img)
 
-    def _bar_text(self, base, pieces, bx, by, bw, h, fw):
+    def _bar_text(self, base, pieces, bx, by, bw, h, fw, inks=None):
         """Draw a bar's labels so every pixel gets the ink its ground wants.
 
         A label routinely straddles the fill edge - "Session 13%" starts one
@@ -445,8 +560,8 @@ class DashboardRenderer:
         left, top = int(bx), int(by)
         size = (int(bx + bw) + 1 - left, int(by + h) + 1 - top)
         edge = max(0, min(size[0], int(round(fw))))
-        for ink, (a, b) in ((self.palette.surface, (0, edge)),
-                            (self.palette.ink, (edge, size[0]))):
+        on_fill, on_track = inks or (self.palette.surface, self.palette.ink)
+        for ink, (a, b) in ((on_fill, (0, edge)), (on_track, (edge, size[0]))):
             if b <= a:
                 continue
             layer = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -456,7 +571,8 @@ class DashboardRenderer:
                         fill=ink, anchor=anchor)
             base.alpha_composite(layer.crop((a, 0, b, size[1])), dest=(left + a, top))
 
-    def _limit_bars(self, base, d, rows, x0, x1, y):
+    def _limit_bars(self, base, d, rows, x0, x1, y, *, fill=None, remain=None,
+                    stale=False):
         """Draw rate-limit bars inside the caller's ``x0..x1`` range.
 
         Multiple rows share the supplied range side by side. The split utility
@@ -479,6 +595,12 @@ class DashboardRenderer:
         see _bar_text for the pixel-exact split. A bar is itself a marker shape,
         so the colored chip means something without breaking the theme.py ban on
         bare colored text.
+
+        `stale` draws a reading that could not be renewed: both tints at half
+        strength against the surface, so the bar reads as a ghost of itself
+        while the split stays visible. The faded fill is too dark for the dark
+        ink, so the label is light throughout: full ink on the fill, dimmed on
+        the track.
         """
         s = self.scale
         n = max(1, len(rows))
@@ -488,14 +610,22 @@ class DashboardRenderer:
         pad = 16 * s
         bw = (x1 - x0 - (n - 1) * gap) / n
         cy = y + h / 2
-        remain = self._bar_remain
+        # The board view draws other bar families (see _bar_families) through
+        # this same primitive; without the arguments it is the accent bar.
+        fill = fill if fill is not None else self.palette.accent
+        remain = remain if remain is not None else self._bar_remain
+        inks = None
+        if stale:
+            fill = _mix(fill, self.palette.surface, 0.5)
+            remain = _mix(remain, self.palette.surface, 0.5)
+            inks = (self.palette.ink, self.palette.ink_dim)
         for i, lim in enumerate(rows):
             bx = x0 + i * (bw + gap)
             d.rounded_rectangle([bx, y, bx + bw, y + h], radius=rad, fill=remain)
             fw = bw * max(0, min(100, lim.percent)) / 100
             if fw > 0:
                 d.rounded_rectangle([bx, y, bx + fw, y + h],
-                                    radius=int(min(rad, fw / 2)), fill=self.palette.accent)
+                                    radius=int(min(rad, fw / 2)), fill=fill)
             room = bw - 2 * pad
             # Truncate the name, never the number: the percentage is the datum
             # and a bar reading "An Extremely …" without it says nothing.
@@ -513,7 +643,17 @@ class DashboardRenderer:
                           + d.textlength(reset, font=self.f_small)
                           + 8 * s) <= room:
                 pieces.append(((bx + bw - pad, cy), reset, "rm"))
-            self._bar_text(base, pieces, bx, y, bw, h, fw)
+            self._bar_text(base, pieces, bx, y, bw, h, fw, inks)
+
+    def _stale_note(self, d, limits, x1, y):
+        """Right-aligned age of a stale reading, on a block's title line."""
+        if limits is None or not limits.stale:
+            return 0
+        age = limits.age_text()
+        note = f"{age} old" if age else "old"
+        d.text((x1, y), note, font=self.f_small, fill=self.palette.ink_faint,
+               anchor="ra")
+        return d.textlength(note, font=self.f_small) + 10 * self.scale
 
     def _split_utility(self, base, d, limits, footer):
         """Vertical limit slots followed by three compact host facts."""
@@ -521,13 +661,15 @@ class DashboardRenderer:
         x0, x1 = (value * s for value in _SPLIT_UTILITY)
         d.text((x0, T.TILE_TOP * s), "LIMITS", font=self.f_label,
                fill=self.palette.ink_dim)
+        self._stale_note(d, limits, x1, (T.TILE_TOP + 4) * s)
+        stale = bool(limits and limits.stale)
 
         rows = list(limits.rows) if limits else []
         overflow = len(rows) - 4 if len(rows) > 5 else 0
         shown = rows[:4] if overflow else rows[:5]
         for index, limit in enumerate(shown):
             y = (_SPLIT_LIMIT_Y + index * _SPLIT_LIMIT_STEP) * s
-            self._limit_bars(base, d, [limit], x0, x1, y)
+            self._limit_bars(base, d, [limit], x0, x1, y, stale=stale)
         if overflow:
             y = _SPLIT_LIMIT_Y + 4 * _SPLIT_LIMIT_STEP
             d.text((x0 + 16 * s, (y + 15) * s), f"+{overflow} windows",
@@ -543,6 +685,197 @@ class DashboardRenderer:
             d.text((value_x, (y - 2) * s),
                    self._fit(d, value, self.f_small, value_room),
                    font=self.f_small, fill=self.palette.ink_dim)
+
+    # -- board view ------------------------------------------------------
+
+    def _header_facts(self, d, W, facts):
+        """Host facts centered in the header, between the date and the clock.
+
+        The board view needs the whole utility column for account limits, so
+        the facts the split view keeps under its bars move up here.
+        """
+        s = self.scale
+        gap, inner = 44 * s, 12 * s
+        widths = [d.textlength(k, font=self.f_foot_key) + inner
+                  + d.textlength(v, font=self.f_small) for k, v in facts]
+        x = (W - sum(widths) - gap * max(0, len(facts) - 1)) / 2
+        y = (T.HEADER_Y + 3) * s
+        for (key, value), width in zip(facts, widths):
+            d.text((x, y), key, font=self.f_foot_key, fill=self.palette.ink_faint)
+            d.text((x + d.textlength(key, font=self.f_foot_key) + inner, y - 2 * s),
+                   value, font=self.f_small, fill=self.palette.ink_dim)
+            x += width + gap
+
+    def _board_drives(self, base, d, drives):
+        """Every drive as a usage bar; network drives in the warm family.
+
+        Two encodings for "network", as everywhere on this panel: the color
+        and the position - local drives always come first.
+        """
+        s = self.scale
+        x0, y0, x1, y1 = (value * s for value in _BOARD_DRIVES)
+        pad = 10 * s
+        d.rectangle([x0, y0, x1, y1], fill=self.palette.surface_tile)
+        d.text((x0 + pad, y0 + 10 * s), "DISKS", font=self.f_label,
+               fill=self.palette.ink_dim)
+        if not drives:
+            d.text((x0 + pad, (_BOARD_BAR_Y + 15) * s), "no drives",
+                   font=self.f_small, fill=self.palette.ink_faint, anchor="lm")
+            return
+        overflow = len(drives) - _BOARD_DRIVE_SLOTS
+        shown = drives[:_BOARD_DRIVE_SLOTS - 1] if overflow > 0 else drives
+        for index, drive in enumerate(shown):
+            fill, remain = self._bar_families[1 if drive.remote else 0]
+            self._limit_bars(base, d, [drive], x0 + pad, x1 - pad,
+                             (_BOARD_BAR_Y + index * _BOARD_BAR_STEP) * s,
+                             fill=fill, remain=remain)
+        if overflow > 0:
+            y = _BOARD_BAR_Y + (_BOARD_DRIVE_SLOTS - 1) * _BOARD_BAR_STEP
+            d.text((x0 + pad + 16 * s, (y + 15) * s),
+                   f"+{len(drives) - len(shown)} more", font=self.f_small,
+                   fill=self.palette.ink_faint, anchor="lm")
+
+    def _board_card(self, img, d, metric, box):
+        """A short metric card: label and unit left, value right, graph below."""
+        s = self.scale
+        x0, y0, x1, y1 = (value * s for value in box)
+        pad = 10 * s
+        graph_y = y0 + 44 * s
+        graph_h = y1 - graph_y - 8 * s
+        color = _color(metric.status, self.palette)
+        alert = metric.status != "ok"
+
+        d.rectangle([x0, y0, x1, y1], fill=self.palette.surface_tile)
+        d.line([(x0 + pad, graph_y + graph_h), (x1 - pad, graph_y + graph_h)],
+               fill=self.palette.ink_faint, width=max(1, s))
+        self._sparkline(img, d, metric, x0 + pad, graph_y,
+                        x1 - x0 - 2 * pad, graph_h, color)
+
+        label_x = x0 + pad
+        if alert:
+            self._warning_mark(d, label_x, y0 + 10 * s, 19 * s, color,
+                               self.palette.surface_tile)
+            label_x += 27 * s
+        d.text((label_x, y0 + 10 * s), metric.label, font=self.f_label,
+               fill=color if alert else self.palette.ink_dim)
+        if metric.sub:
+            d.text((label_x + d.textlength(metric.label, font=self.f_label) + 10 * s,
+                    y0 + 13 * s), metric.sub, font=self.f_foot_key,
+                   fill=self.palette.ink_faint)
+        d.text((x1 - pad, y0 + 2 * s), metric.text, font=self.f_value_xs,
+               fill=color if alert else self.palette.ink, anchor="ra",
+               stroke_width=max(1, 2 * s), stroke_fill=self.palette.surface_tile)
+
+    def _board_net(self, img, d, down, up, box):
+        """Both network directions in one card, on one shared scale.
+
+        Down is the accent curve, up the warm one; each value carries its
+        drawn arrow in the curve's color, so the pairing never rests on color
+        alone. A shared scale is the point of putting them together: two
+        curves each zoomed to its own maximum would look equally busy.
+        """
+        s = self.scale
+        x0, y0, x1, y1 = (value * s for value in box)
+        pad = 10 * s
+        graph_y = y0 + 44 * s
+        graph_h = y1 - graph_y - 8 * s
+        d.rectangle([x0, y0, x1, y1], fill=self.palette.surface_tile)
+        d.line([(x0 + pad, graph_y + graph_h), (x1 - pad, graph_y + graph_h)],
+               fill=self.palette.ink_faint, width=max(1, s))
+        pairs = [(m, c) for m, c in ((down, self.palette.accent),
+                                     (up, self.palette.accent_warm)) if m is not None]
+        top = max([1e5] + [v for m, _ in pairs for v in m.history])
+        for metric, color in pairs:
+            self._sparkline(img, d, metric, x0 + pad, graph_y,
+                            x1 - x0 - 2 * pad, graph_h, color, top=top)
+
+        d.text((x0 + pad, y0 + 10 * s), "NET", font=self.f_label,
+               fill=self.palette.ink_dim)
+        x = x1 - pad
+        arrow = 17 * s
+        for metric, color in reversed(pairs):  # right to left: up, then down
+            x -= d.textlength(metric.text, font=self.f_value_net)
+            d.text((x, y0 + 9 * s), metric.text, font=self.f_value_net,
+                   fill=self.palette.ink, stroke_width=max(1, 2 * s),
+                   stroke_fill=self.palette.surface_tile)
+            x -= arrow * 0.62 + 6 * s
+            self._arrow(d, x, y0 + 13 * s, arrow, color, metric.arrow or "down")
+            x -= 14 * s
+
+    def _board_accounts(self, base, d, accounts):
+        """One titled block of limit bars per Claude account.
+
+        Each account has its own bar family, announced by a chip of that color
+        beside its name. With one account the block has the column to itself;
+        with more, each shows only its first windows (session and weekly come
+        first in Limits.rows, so those are what survives).
+        """
+        s = self.scale
+        x0, x1 = (value * s for value in _SPLIT_UTILITY)
+        accounts = list(accounts)[:max(_BOARD_ACCOUNT_ROWS)]
+        if not accounts:
+            d.text((x0, T.TILE_TOP * s), "LIMITS", font=self.f_label,
+                   fill=self.palette.ink_dim)
+            return
+        slots = _BOARD_ACCOUNT_ROWS[len(accounts)]
+        top, bottom = _SPLIT_DIVIDER_Y
+        step = (bottom - top) / len(accounts)
+        for index, account in enumerate(accounts):
+            fill, remain = self._bar_families[index]
+            y = T.TILE_TOP + index * step
+            chip = 14 * s
+            d.rounded_rectangle([x0, (y + 6) * s, x0 + chip, (y + 6) * s + chip],
+                                radius=3 * s, fill=fill)
+            stale = bool(account.limits and account.limits.stale)
+            if stale:
+                # The chip is the key to the bars below, so it fades with them.
+                d.rounded_rectangle([x0, (y + 6) * s, x0 + chip, (y + 6) * s + chip],
+                                    radius=3 * s,
+                                    fill=_mix(fill, self.palette.surface, 0.5))
+            note = self._stale_note(d, account.limits, x1, (y + 4) * s)
+            d.text((x0 + chip + 10 * s, y * s),
+                   self._fit(d, account.name, self.f_label,
+                             x1 - x0 - chip - 10 * s - note),
+                   font=self.f_label, fill=self.palette.ink_dim)
+            rows = list(account.limits.rows) if account.limits else []
+            if not rows:
+                d.text((x0, (y + 34 + 15) * s), "no data", font=self.f_small,
+                       fill=self.palette.ink_faint, anchor="lm")
+            for row_index, row in enumerate(rows[:slots]):
+                self._limit_bars(base, d, [row], x0, x1,
+                                 (y + 34 + row_index * _BOARD_BAR_STEP) * s,
+                                 fill=fill, remain=remain, stale=stale)
+
+    def render_board(self, metrics: dict, drives: list, sessions: list,
+                     summary: str, accounts=(), facts=(),
+                     pulse_phase=0) -> Image.Image:
+        """Drives and three metrics left, sessions, then limits per account."""
+        s = self.scale
+        W, H = T.WIDTH * s, T.HEIGHT * s
+        img = Image.new("RGBA", (W, H), self.palette.surface)
+        d = ImageDraw.Draw(img)
+
+        self._header(d, W)
+        self._header_facts(d, W, list(facts))
+
+        self._board_drives(img, d, drives)
+        cards = iter(_BOARD_CARDS)
+        for key in ("cpu", "ram"):
+            if key in metrics:
+                self._board_card(img, d, metrics[key], next(cards))
+        if "net_down" in metrics or "net_up" in metrics:
+            self._board_net(img, d, metrics.get("net_down"),
+                            metrics.get("net_up"), next(cards))
+
+        divider_top, divider_bottom = _SPLIT_DIVIDER_Y
+        d.line([(_SPLIT_X * s, divider_top * s), (_SPLIT_X * s, divider_bottom * s)],
+               fill=self.palette.ink_faint, width=max(1, s))
+
+        self._split_sessions(d, sessions, summary, pulse_phase=pulse_phase,
+                             dense=True)
+        self._board_accounts(img, d, accounts)
+
+        return self._finish(img)
 
     def render_split(self, metrics: dict, sessions: list, summary: str,
                      footer: list[tuple[str, str]] | None = None,

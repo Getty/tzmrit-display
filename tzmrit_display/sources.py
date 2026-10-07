@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import socket
+import sys
+import threading
 import time
 from pathlib import Path
 from collections import deque
@@ -21,6 +23,21 @@ HAS_LOADAVG = hasattr(os, "getloadavg")
 # "/" is ambiguous on Windows; the home directory's anchor gives C:\ there
 # and "/" on Unix.
 ROOT_PATH = Path.home().anchor or "/"
+
+WINDOWS = sys.platform == "win32"
+
+# Drive usage moves slowly, and asking a network drive for it can block for
+# as long as its server takes to time out - so it is read off the frame loop
+# and reused for a while.
+DRIVES_TTL = 30.0
+# How long the very first drives() call may wait for that reading, so the
+# first frame is not drawn with an empty list.
+DRIVES_FIRST_WAIT = 2.0
+
+_REMOTE_FS = frozenset({
+    "nfs", "nfs4", "cifs", "smb", "smbfs", "smb3", "sshfs", "fuse.sshfs",
+    "9p", "afpfs", "davfs", "ceph", "glusterfs",
+})
 
 
 @dataclass
@@ -64,6 +81,97 @@ def _human_bytes(n: float) -> str:
     return f"{n:.0f}"
 
 
+def _human_size(n: float) -> str:
+    """Coarse capacity: 3.7T, 510G, 800M - a bar label has no room for more."""
+    if n >= 1e12:
+        return f"{n / 1e12:.1f}T"
+    if n >= 1e9:
+        return f"{n / 1e9:.0f}G"
+    return f"{n / 1e6:.0f}M"
+
+
+@dataclass
+class Drive:
+    """One volume as a usage bar: how full, how much is left, local or not.
+
+    Shaped like a claude_limits.Limit (`label`, `percent`, `reset_text()`) so
+    the renderer draws both with the same bar; the slot a limit uses for its
+    countdown carries the free space here.
+    """
+
+    label: str
+    percent: int
+    free: float
+    remote: bool = False
+
+    def reset_text(self, now=None) -> str:
+        return _human_size(self.free)
+
+
+def _is_real_volume(part) -> bool:
+    """Unix: a mounted block device worth a bar (no loop images, no /boot)."""
+    if not part.device.startswith("/dev/") or part.device.startswith("/dev/loop"):
+        return False
+    if part.fstype in ("squashfs", "iso9660", "tmpfs", "devtmpfs", "overlay"):
+        return False
+    return not part.mountpoint.startswith(("/boot", "/snap", "/var/lib/docker"))
+
+
+def list_drives() -> list[Drive]:
+    """Every mounted volume, local ones first.
+
+    Windows: each drive letter, network drives included (psutil marks them
+    `remote`); a drive without a medium (an empty card reader) is skipped.
+    Several letters mapped to the same share report identical totals and would
+    repeat one bar, so they are merged into one labeled with all its letters
+    ("AMSV"). Unix: real block devices plus network filesystems, one bar per
+    device.
+    """
+    found: list[tuple[bool, str, object]] = []
+    devices: set[str] = set()
+    try:
+        partitions = psutil.disk_partitions(all=True)
+    except Exception:
+        return []
+    for part in partitions:
+        opts = set((part.opts or "").split(","))
+        if WINDOWS:
+            if "cdrom" in opts:
+                continue
+            remote = "remote" in opts
+            label = part.mountpoint.rstrip(":\\/") or part.mountpoint
+        else:
+            remote = part.fstype in _REMOTE_FS
+            if not remote and not _is_real_volume(part):
+                continue
+            if part.device in devices:
+                continue
+            devices.add(part.device)
+            label = os.path.basename(part.mountpoint.rstrip("/")) or "/"
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue  # no medium, or a share that is gone
+        if not usage.total:
+            continue
+        found.append((remote, label, usage))
+
+    drives: list[Drive] = []
+    shares: dict[tuple, Drive] = {}
+    for remote, label, usage in sorted(found, key=lambda f: (f[0], f[1])):
+        key = (usage.total, usage.used)
+        if remote and key in shares:
+            if WINDOWS:
+                shares[key].label += label
+            continue
+        drive = Drive(label, int(round(usage.used / usage.total * 100)),
+                      float(usage.free), remote)
+        if remote:
+            shares[key] = drive
+        drives.append(drive)
+    return drives
+
+
 def _cpu_temperature() -> float | None:
     """CPU package temperature, or None where the platform offers none.
 
@@ -95,6 +203,9 @@ class SystemSource:
         self.hostname = socket.gethostname()
         self._last_net = psutil.net_io_counters()
         self._last_t = time.monotonic()
+        self._drives: list[Drive] = []
+        self._drives_at = float("-inf")
+        self._drives_thread: threading.Thread | None = None
         has_temp = _cpu_temperature() is not None
 
         self.metrics: dict[str, Metric] = {
@@ -170,6 +281,25 @@ class SystemSource:
             m["disk"].sub = f"{du.free / 1e9:.0f} GB free"
 
         return m
+
+    # -- drives ----------------------------------------------------------
+
+    def _refresh_drives(self) -> None:
+        self._drives = list_drives()
+
+    def drives(self) -> list[Drive]:
+        """Usage of every volume, refreshed off-thread every DRIVES_TTL."""
+        now = time.monotonic()
+        running = self._drives_thread is not None and self._drives_thread.is_alive()
+        if now - self._drives_at >= DRIVES_TTL and not running:
+            first = self._drives_thread is None
+            self._drives_at = now
+            self._drives_thread = threading.Thread(
+                target=self._refresh_drives, name="tzmrit-drives", daemon=True)
+            self._drives_thread.start()
+            if first:
+                self._drives_thread.join(DRIVES_FIRST_WAIT)
+        return self._drives
 
     # -- footer ----------------------------------------------------------
 

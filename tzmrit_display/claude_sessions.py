@@ -9,7 +9,8 @@ model ran it (_transcript_model).
 
 What is NOT visible here:
   * Sessions on other machines (Remote Control goes through the cloud bridge,
-    not through a local file).
+    not through a local file). Those come in through remote_hosts, which runs
+    the same reading on the other machine over ssh.
   * Subagents inside a session - they live in the same process and do not
     surface externally.
 """
@@ -30,11 +31,14 @@ import psutil
 LINUX = sys.platform.startswith("linux")
 WINDOWS = sys.platform == "win32"
 
-# procStart on Windows holds .NET DateTime ticks: 100 ns units since
-# 0001-01-01, in local time. Verified against a live session - the value
-# matches psutil's create_time to the microsecond.
+# procStart on Windows holds 100 ns ticks of the process start, and the epoch
+# depends on the Claude Code version. Older versions wrote .NET DateTime ticks
+# (since 0001-01-01, local time); 2.1.29x writes a FILETIME (since 1601-01-01,
+# UTC). Both verified against live sessions - the value matches psutil's
+# create_time to the microsecond.
 _TICKS_PER_SECOND = 10 ** 7
 _UNIX_EPOCH_SECONDS = 62_135_596_800  # 0001-01-01 .. 1970-01-01
+_FILETIME_EPOCH_SECONDS = 11_644_473_600  # 1601-01-01 .. 1970-01-01
 
 SESSION_DIR = Path.home() / ".claude" / "sessions"
 # Per-session transcript lives here as <cwd-encoded>/<sessionId>.jsonl. Its
@@ -94,11 +98,13 @@ def _proc_start(pid: int) -> str | None:
         return None
 
 
-def _windows_start_ticks(pid: int) -> tuple[int, int] | None:
-    """Process start time as .NET ticks, in both local and UTC reading.
+def _windows_start_ticks(pid: int) -> tuple[int, int, int] | None:
+    """Process start time as .NET ticks (local, UTC) and as a FILETIME.
 
-    Claude Code stores the local-time value; the UTC variant is accepted as
-    well so a future change of the writer does not make every session vanish.
+    Which one Claude Code stores depends on its version (see the constants
+    above); accepting every reading keeps a change of the writer from making
+    every session vanish. The epochs lie centuries apart, so the readings
+    cannot be mistaken for one another.
     """
     try:
         created = psutil.Process(pid).create_time()
@@ -107,14 +113,15 @@ def _windows_start_ticks(pid: int) -> tuple[int, int] | None:
     local = datetime.fromtimestamp(created)
     local_ticks = int((local - datetime(1, 1, 1)).total_seconds() * _TICKS_PER_SECOND)
     utc_ticks = int((created + _UNIX_EPOCH_SECONDS) * _TICKS_PER_SECOND)
-    return local_ticks, utc_ticks
+    filetime = int((created + _FILETIME_EPOCH_SECONDS) * _TICKS_PER_SECOND)
+    return local_ticks, utc_ticks, filetime
 
 
 def _is_live(pid: int, expected_start: object) -> bool:
     """Is this session's process still the one that wrote the file?
 
-    On Linux `procStart` is compared exactly, on Windows as .NET ticks with a
-    small tolerance - both rule out a recycled PID being mistaken for a live
+    On Linux `procStart` is compared exactly, on Windows as 100 ns ticks with
+    a small tolerance - both rule out a recycled PID being mistaken for a live
     session.
 
     Elsewhere (or when the value does not parse) the stored value is ignored
@@ -261,6 +268,46 @@ def _transcript_mtime(session_id: str, ttl: float = _ACTIVE_TTL,
     return mtime
 
 
+def _subagent_activity(session_id: str, ttl: float = _ACTIVE_TTL,
+                       projects: Path | None = None) -> tuple[int, float]:
+    """(subagents working right now, epoch of the latest subagent write).
+
+    A session's subagents each append to their own transcript,
+    `<cwd-encoded>/<sessionId>/subagents/agent-*.jsonl`. Nothing marks one as
+    finished, so "working" is the same judgement Session.working makes for the
+    session itself: written to within WORKING_ACTIVE_WINDOW. A subagent deep in
+    one long tool call therefore drops out of the count until it writes again -
+    an undercount, never a phantom.
+    """
+    if not session_id:
+        return 0, 0.0
+    now = time.monotonic()
+    hit = _subagent_cache.get(session_id)
+    if hit and now - hit[0] < ttl:
+        return hit[1], hit[2]
+    projects = projects or PROJECTS_DIR
+    count, newest, wall = 0, 0.0, time.time()
+    try:
+        for path in projects.glob(f"*/{session_id}/subagents/agent-*.jsonl"):
+            try:
+                m = path.stat().st_mtime
+            except OSError:
+                continue
+            newest = max(newest, m)
+            if wall - m < WORKING_ACTIVE_WINDOW:
+                count += 1
+    except OSError:
+        pass
+    _subagent_cache[session_id] = (now, count, newest)
+    if len(_subagent_cache) > 64:
+        for dead in [k for k, v in _subagent_cache.items() if now - v[0] > 60]:
+            _subagent_cache.pop(dead, None)
+    return count, newest
+
+
+_subagent_cache: dict[str, tuple[float, int, float]] = {}
+
+
 # The model in use is only in the transcript, never in the session file. It
 # changes at most when someone types /model, so the TTL is generous - a minute
 # of staleness costs nothing, re-reading every frame would cost a file seek per
@@ -388,10 +435,19 @@ class Session:
     child_count: int = 0
     active_at: float = 0.0
     model: str = ""
+    # Where the session runs. Empty for a purely local board; set on every row
+    # (local ones included) once remote hosts contribute, see remote_hosts.
+    host: str = ""
+    # Subagents of this session that are working right now, see
+    # _subagent_activity. They live inside the session's process, so this is
+    # the only trace of them.
+    subagents: int = 0
 
     @property
     def project(self) -> str:
-        base = os.path.basename(self.cwd.rstrip("/"))
+        # Split on both separators by hand: a remote session's cwd follows the
+        # remote platform's convention, not the one os.path speaks here.
+        base = re.split(r"[/\\]", self.cwd.rstrip("/\\"))[-1]
         return base or self.cwd
 
     @property
@@ -413,6 +469,10 @@ class Session:
         `waiting` is never gated: a session waiting for a human isn't writing
         the transcript by definition and must still surface.
         """
+        if self.subagents and not self.waiting:
+            # Background agents keep working while the session itself already
+            # reports idle; their fresh transcripts are activity all the same.
+            return True
         if self.status != "busy":
             return False
         if not self.active_at:
@@ -427,6 +487,9 @@ class Session:
         # inactive, so the age is not double-encoded here.
         if self.status == "busy" and not self.working:
             return STATUS_TEXT["idle"]
+        if self.subagents and self.working:
+            # More telling than the bare "working": how much is going on.
+            return f"{self.subagents} agent" + ("s" if self.subagents != 1 else "")
         return STATUS_TEXT.get(self.status, self.status)
 
     @property
@@ -460,7 +523,10 @@ class Session:
 
     @property
     def sort_key(self) -> tuple:
-        return (STATUS_ORDER.get(self.status, 9), -self.status_since)
+        order = STATUS_ORDER.get(self.status, 9)
+        if self.subagents and order > STATUS_ORDER["busy"]:
+            order = STATUS_ORDER["busy"]  # idle on paper, agents still running
+        return (order, -self.status_since)
 
 
 def list_sessions(directory: Path | None = None) -> list[Session]:
@@ -497,7 +563,8 @@ def list_sessions(directory: Path | None = None) -> list[Session]:
             status_since=float(stamp) / 1000.0 if stamp else 0.0,
         ))
         out[-1].rss, out[-1].child_count = process_memory(pid)
-        out[-1].active_at = _transcript_mtime(out[-1].session_id) or 0.0
+        out[-1].subagents, sub_at = _subagent_activity(out[-1].session_id)
+        out[-1].active_at = max(_transcript_mtime(out[-1].session_id) or 0.0, sub_at)
         out[-1].model = _transcript_model(out[-1].session_id)
 
     out.sort(key=lambda s: s.sort_key)
@@ -513,6 +580,9 @@ def summarize(sessions: list[Session]) -> str:
     parts = [f"{len(sessions)} session" + ("s" if len(sessions) != 1 else "")]
     if working:
         parts.append(f"{working} active")
+    agents = sum(s.subagents for s in sessions)
+    if agents:
+        parts.append(f"{agents} agent" + ("s" if agents != 1 else ""))
     if waiting:
         parts.append(f"{waiting} waiting")
     total = sum(s.rss for s in sessions)

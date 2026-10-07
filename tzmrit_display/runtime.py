@@ -40,6 +40,18 @@ STOP_FILE = "stop-request"
 STOP_WAIT = 6.0
 
 
+def config_dir() -> Path:
+    """Per-user directory for what the user edits (the hosts file).
+
+    Not created here: only `service install` writes into it.
+    """
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "tzmrit-display"
+
+
 def runtime_dir() -> Path:
     """Per-user writable directory for runtime state; created on first use.
 
