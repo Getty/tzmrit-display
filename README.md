@@ -2,27 +2,41 @@
 
 # tzmrit-display
 
-**Your PC case display on Linux and Windows — as a system monitor, and as a view of your running Claude sessions.**
+**Your PC case display on Linux and Windows — a system monitor, and a status board for the Claude Code sessions of all your machines.**
 
 For the **TZMRIT 9.16"** and compatible HONGTAI panels, which otherwise only the vendor's Windows application can drive.
 
 </div>
 
+![Board: drives, CPU/RAM/NET, the Claude sessions of three machines, two accounts' limits](docs/img/board.png)
+
+**The board** (`--board`, or as soon as you name other machines with `--hosts`):
+every drive as a bar, CPU/RAM/NET, the Claude Code sessions of this machine and
+of the others — read over ssh, nothing installed there — and the limits of every
+Claude account involved. Above: one Windows PC, two Linux hosts, sixteen
+sessions, two accounts. See
+[Several machines on one panel](#several-machines-on-one-panel).
+
+On Windows it is one download and one command:
+
+```powershell
+tzmrit-display service install --hosts reuben,pikachu
+```
+
+([installer](https://github.com/Getty/tzmrit-display/releases/latest), then
+[Running it permanently](#running-it-permanently).)
+
 ![System monitor](docs/img/dashboard.png)
 
-Six values, each with its recent history. Color appears only when something gets out of hand.
+**The system monitor** (`run`): six values, each with its recent history. Color
+appears only when something gets out of hand.
 
 ![Claude sessions](docs/img/claude.png)
 
-With `--claude` the strip splits into a left third of four system metrics in 2×2
-cards (the value sits over each graph) and the right two thirds with two session
-lanes plus a utility column for Claude limits and HOST/DISK/UPTIME. Up to **ten
-sessions** fit without truncation.
-
-With `--board` — or as soon as you name other machines with `--hosts` — the
-strip becomes a board: every drive as a bar, CPU/RAM/NET, the Claude sessions
-of all machines, and the limits of every Claude account involved. See
-[Several machines on one panel](#several-machines-on-one-panel).
+**One machine's sessions** (`run --claude`): the strip splits into a left third
+of four system metrics in 2×2 cards (the value sits over each graph) and the
+right two thirds with two session lanes plus a utility column for Claude limits
+and HOST/DISK/UPTIME. Up to **ten sessions** fit without truncation.
 
 ---
 
@@ -130,8 +144,8 @@ tzmrit-display run --claude       # system metrics + Claude sessions
 tzmrit-display run                # metrics only, six columns instead of four
 tzmrit-display run --claude --http 8080   # also serve the same frame at :8080
 tzmrit-display run --board        # drives, CPU/RAM/NET, sessions, limits
-tzmrit-display run --hosts atlas,nova   # the board, plus those machines' sessions
-tzmrit-display service install --hosts atlas,nova   # Windows: start at logon
+tzmrit-display run --hosts reuben,pikachu   # the board, plus those machines' sessions
+tzmrit-display service install --hosts reuben,pikachu   # Windows: start at logon
 tzmrit-display stop               # ask a running dashboard to exit cleanly
 tzmrit-display info               # what the device says about itself
 tzmrit-display preview -o out.png # render the layout without using the panel
@@ -149,7 +163,7 @@ working marker follows the selected accent rather than staying blue.
 ## Several machines on one panel
 
 ```bash
-tzmrit-display run --hosts atlas,nova,alex=alex@lab.example.org
+tzmrit-display run --hosts reuben,pikachu,frank=frank@lab.example.org
 ```
 
 `--hosts` adds the Claude Code sessions of other machines to the list, each row
@@ -199,9 +213,9 @@ connections change within a second, no restart.
 
 ```
 # ~/.config/tzmrit-display/hosts.txt
-atlas
-nova
-alex=alex@lab.example.org
+reuben
+pikachu
+frank=frank@lab.example.org
 ```
 
 ## View it in a browser (`--http`)
@@ -232,7 +246,7 @@ program running, the screen goes black.
 ### Windows
 
 ```powershell
-tzmrit-display service install --hosts atlas,nova --http 8765 --http-host 127.0.0.1
+tzmrit-display service install --hosts reuben,pikachu --http 8765 --http-host 127.0.0.1
 ```
 
 registers a logon task that starts the board, restarts it after a crash, and
