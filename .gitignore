@@ -46,3 +46,6 @@ config.yml
 # skilletor: Config und Ignore-Block committen
 !.claude/skilletor.json
 !.claude/.gitignore
+
+# git worktrees for feature work -- never commit
+/.claude/worktrees/

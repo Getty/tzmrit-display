@@ -1,108 +1,90 @@
 # tzmrit-display House Rules
 
-Apply to every task in this repository unless explicitly overridden. Bias: caution
-over speed on non-trivial work; use judgment on trivial tasks. Loaded automatically
-at launch (same priority as `CLAUDE.md`). Subagents get their discipline from the
-skills force-loaded via `briefing.skills` — this file is for the orchestrating agent.
+Apply to every task here unless explicitly overridden. Bias: caution over speed on non-trivial work.
+Subagents get their conventions from the skills force-loaded via `briefing.skills` — not restated
+here.
 
 ## Engineering discipline
 
-1. **Think before coding** — State assumptions. When uncertain, ask rather than
-   guess. Present alternatives when ambiguous. Push back when a simpler approach
-   exists. Stop when confused; name what's unclear.
+1. **Think before coding** — State assumptions; when uncertain, ask rather than guess, offer
+   alternatives if ambiguous, push back on simpler approaches. Stop when confused; say what's
+   unclear.
 2. **Simplicity first** — Minimum code that solves the problem. Nothing speculative.
-3. **Surgical changes** — Touch only what you must. Don't "improve" adjacent code,
-   comments, or formatting. Match existing style.
-4. **Read before you write** — Before new code, read the module docstring, exports
-   and immediate callers. The docstrings in `tzmrit_display/*.py` carry the *why*;
-   "looks orthogonal" is dangerous around the wire protocol and the render pipeline.
-5. **Surface conflicts, don't average them** — Contradicting patterns: pick one,
-   explain why, flag the other. Don't blend.
-6. **Tests verify intent** — A test that can't fail when the logic changes is wrong.
-   Reproduce a bug before fixing it; leave a regression test behind.
-7. **Fail loud** — "Done" is wrong if anything was skipped silently. "Tests pass" is
-   wrong if any were skipped. Surface uncertainty, don't hide it.
-8. **A red test is a claim before it is a failure** — The protocol tests assert bytes
-   captured from real firmware; the render tests assert real intent. Before turning
-   one green, say what it claims and whether your fix keeps that claim. If the claim
-   is wrong, fix the claim and say so.
+3. **Surgical changes** — Touch only what you must. Don't "improve" adjacent code, comments, or
+   formatting. Match existing style.
+4. **Read before you write** — Before new code, read the docstring, exports and callers; docstrings
+   carry the *why*. "Looks orthogonal" is dangerous around the wire protocol and the renderer.
+5. **Surface conflicts, don't average them** — Contradicting patterns: pick one, explain why, flag
+   the other; don't blend.
+6. **Tests verify intent** — A test that can't fail when the logic changes is wrong. Reproduce a bug
+   before fixing it; leave a regression test behind.
+7. **Fail loud** — "Done" is wrong if anything was skipped silently. "Tests pass" is wrong if any
+   were skipped. Surface uncertainty, don't hide it.
+8. **A red test is a claim before it is a failure** — Before turning a red test green, say what it
+   claims and whether your fix keeps that claim. If the claim is wrong, fix the claim and say so.
 
 ## Delegation
 
 This rule depends on whether the Agent/Task tool is available to you.
 
-- **You can spawn subagents** (orchestrating main agent): Do NOT touch
-  behavior-relevant code yourself — delegate to `tzmrit-display-worker`. Your lane:
-  coordinate, inspect, plan, review diffs, run tests, edit non-behavioral
-  docs. When in doubt, delegate. Why: only the `tzmrit-display-*` agents get their
-  skills force-loaded via `briefing.skills`; you get no briefing and would touch the
-  wire protocol / render engine with too little context.
+- **You can spawn subagents** (orchestrating main agent): Do NOT touch behavior-relevant code —
+  delegate to `tzmrit-display-worker`. Your lane: coordinate, inspect, plan, review diffs, run
+  tests, edit non-behavioral docs. When in doubt, delegate. Why: only the `tzmrit-display-*` agents
+  get their skills force-loaded via `briefing.skills`; you get none and would touch the wire
+  protocol blind.
 
-  | Task | Agent |
-  |---|---|
-  | Implement / refactor / debug / test code | `tzmrit-display-worker` (default) |
-  | Cross-cutting pre-release audit (version, deps, changes) | `tzmrit-display-release-manager` |
-  | Linux release chain (build, systemd, udev) | `tzmrit-display-release-linux` |
-  | Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
+| Task | Agent |
+|---|---|
+| Implement / refactor / debug / test code | `tzmrit-display-worker` (default) |
+| Cross-cutting pre-release audit (version, deps, changes) | `tzmrit-display-release-manager` |
+| Linux release chain (build, systemd, udev) | `tzmrit-display-release-linux` |
+| Windows release chain (PyInstaller, NSIS, `.bat`) | `tzmrit-display-release-windows` |
 
-  The three release auditors are read-only and report; they never edit, tag or
-  release — the worker fixes what they find. Run the two platform auditors in
-  parallel for a full pre-release check.
+All three release auditors are read-only: they report, never edit, tag or release — the worker fixes
+what they find. Run the two platform auditors in parallel for a full pre-release check.
 
-- **You cannot spawn subagents** (you ARE a `tzmrit-display-*` agent): The delegation
-  lock does not apply to you — implement, refactor, debug, and test per these rules.
+- **You cannot spawn subagents** (you ARE a `tzmrit-display-*` agent): The delegation lock does not
+  apply to you — implement, refactor, debug, and test per these rules.
 
-Behavior-relevant = anything under `tzmrit_display/` and `tests/`: the wire protocol,
-the render pipeline, metric sources, session detection, the CLI, error handling,
-performance. Pure prose docs (`README.md`, `docs/*.md`) and changelog notes are not.
+Behavior-relevant = anything under `tzmrit_display/` and `tests/`: wire protocol, render pipeline,
+metric sources, session detection, CLI, error handling, performance. Prose docs are not.
 
-**Only `tzmrit-display-release-manager` commits.** A worker leaves a commit-ready tree and hands its card
-to `review`; you then dispatch `tzmrit-display-release-manager` to cut the commit and close the card.
+**Only `tzmrit-display-release-manager` commits.** A worker leaves a commit-ready tree and hands its
+card to `review`; then dispatch `tzmrit-display-release-manager` to commit and close the card.
 
 ## Coordination — karr board (always in scope)
 
-Ticket coordination is the orchestrating agent's job, so `karr` is always in scope —
-don't invoke the `kanban-issues-karr-coordination` skill first, just use it. Git-native kanban;
-state lives in `refs/karr/*`; this repo has its own board. Day-to-day:
+Ticket coordination is the orchestrating agent's job: `karr` is always in scope — don't invoke the
+`kanban-issues-karr-coordination` skill first, just use it. State lives in `refs/karr/*`; one board.
 
 - `karr list --compact` / `karr board` — open work · `karr show ID` — detail
-- `karr create "Title" --priority high --tags a,b --body '…'` — new ticket
-- `karr move ID in-progress --claim NAME` — start · `karr handoff ID --claim NAME --note "…"` — to review
+- `karr create "Title" --priority high --tags a,b --body '…'` — new · `karr move ID in-progress
+  --claim NAME` — start · `karr handoff ID --claim NAME --note "…"` — to review
 - mutating commands auto-sync. Full surface: skill `kanban-issues-karr-coordination`.
 
-**Serialize board mutations when fanning out.** Keep implementation parallel if you
-like, but collect the results and then loop `karr move`/`handoff`/`sync`
-sequentially — N landing at once is a resource event, not a cheap command.
+**Serialize board mutations when fanning out.** Keep implementation parallel, collect results, then
+loop `karr move`/`handoff`/`sync` sequentially — N at once is a resource event, not a cheap command.
 
 ## Release — never without permission
 
-`pytest`, `python -m build`, `preview`/`image` are fine anytime. Creating the version
-**git tag**, `twine`/PyPI upload, and any release CI trigger are STRICTLY forbidden
-without the maintainer's explicit go-ahead — even if a plan lists "release" next.
-Releasing here IS tagging: the version is derived from the tag by setuptools-scm, so
-the tag is the release. Stop and ask.
+`pytest`, `python -m build`, `preview`/`image` are fine anytime. Creating the version **git tag**,
+`twine`/PyPI upload, and any release CI trigger are STRICTLY forbidden without the maintainer's
+explicit go-ahead — even if a plan lists "release" next. Stop and ask.
 
 ## Public issues — never act without instruction
 
-Two trackers, two universes. **karr** is the agent work board — internal, churned
-freely. **GitHub** (`Getty/tzmrit-display`) carries real humans' bug reports, written
-under the maintainer's account. **Never act on a GitHub issue on your own
-initiative — not even to read it.** No listing, viewing, commenting, closing, or
-creating unless the user explicitly says to handle a specific issue.
+**GitHub** (`Getty/tzmrit-display`) is the public tracker — real humans' bug reports, under the
+maintainer's account; **karr** is our internal board. **Never act on a GitHub issue on your own —
+not even to read it.** No listing, viewing, commenting, closing/creating unless told to handle one.
 
-## Hardware hazards — why this file is worth loading
+## Hardware hazards — locks here, mechanisms in `tzmrit-display-core`
 
-No physical panel is attached in this environment, and the firmware fails **silently**:
-a 4:4:4 JPEG, a missing keepalive, hardcoded geometry, or an altered checksum all end
-in a black screen with no error, not an exception. So a change to `panel.py`/`render.py`
-that "runs fine" against `pytest` and `preview` (which need no device) is *not* proven
-on hardware — say exactly what you verified and what you did not. The protocol tests
-guard the byte-level contract; never edit `control_frame`/`image_frame`/`checksum`
-output to make a test pass unless a new real-hardware capture backs it.
+- **No panel; firmware fails silently** — black screen, no error. A `panel.py`/`render.py` change
+  that passes `pytest`/`preview` is *not* proven on hardware — say what you verified and what not.
+- **Never edit `control_frame`/`image_frame`/`checksum` output to make a test pass** unless a new
+  real-hardware capture backs it — the protocol tests guard the byte-level contract.
 
 ## Python & architecture specifics — reference, don't restate
 
-Architecture, hardware invariants, rendering rules, portability and repo conventions
-live in skill `tzmrit-display-core` (force-loaded for `tzmrit-display-*` agents). The
-two release pipelines live in skill `tzmrit-display-packaging`. Do not duplicate that
-content here.
+Architecture, invariants, rendering rules and portability live in skill `tzmrit-display-core`; the
+release pipelines in `tzmrit-display-packaging`. Do not duplicate that here.
