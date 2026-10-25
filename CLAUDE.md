@@ -8,8 +8,9 @@ script: `tzmrit-display`.
 ## Delegation
 
 Delegate behavior-relevant code to the right agent instead of touching it
-yourself — the principle, the lane and the hardware hazards are in
-`.claude/rules/tzmrit-display-rules.md` (auto-loaded every turn).
+yourself — the principle is a shared house rule (skilletor bundle `getty-house@getty`);
+the lane and the hardware hazards are in `.claude/rules/tzmrit-display-rules.md`
+(auto-loaded every turn).
 
 | Task | Agent |
 |---|---|
