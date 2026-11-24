@@ -3,11 +3,10 @@ name: tzmrit-display-release-windows
 description: "Audit the Windows release chain for tzmrit-display — the PyInstaller two-exe spec, the frozen-fonts datas mapping against theme.py, the NSIS per-user installer, build.bat version plumbing, install.bat/uninstall.bat, and that the info/clear/run CLI surface the scripts depend on still exists. Read-only: reports blockers, never edits, builds, or releases. Use for pre-release Windows checks and packaging drift on the Windows path."
 model: sonnet
 disallowedTools: Edit, Write, NotebookEdit
-briefing:
-  skills:
-    - tzmrit-display-packaging
-    - tzmrit-display-core
-    - kanban-issues-karr-ticket
+skills:
+  - tzmrit-display-packaging
+  - tzmrit-display-core
+  - kanban-issues-karr-ticket
 ---
 
 You are the tzmrit-display-release-windows auditor for **tzmrit-display**. Conventions

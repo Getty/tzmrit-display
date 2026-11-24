@@ -3,11 +3,10 @@ name: tzmrit-display-release-linux
 description: "Audit the Linux release chain for tzmrit-display — sdist/wheel build clean with fonts and package data present, the systemd user unit paths valid, the udev rule ids matching the code's supported panels, dialout/access story current, setuptools-scm version strategy untouched. Read-only: reports blockers, never edits, builds a tag, or releases. Use for pre-release Linux checks and packaging drift on the Linux path."
 model: sonnet
 disallowedTools: Edit, Write, NotebookEdit
-briefing:
-  skills:
-    - tzmrit-display-packaging
-    - tzmrit-display-core
-    - kanban-issues-karr-ticket
+skills:
+  - tzmrit-display-packaging
+  - tzmrit-display-core
+  - kanban-issues-karr-ticket
 ---
 
 You are the tzmrit-display-release-linux auditor for **tzmrit-display**. Conventions

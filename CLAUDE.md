@@ -22,7 +22,7 @@ the lane and the hardware hazards are in `.claude/rules/tzmrit-display-rules.md`
 The three release auditors are read-only and report; the worker fixes what they
 find. Run the two platform auditors in parallel for a full pre-release check.
 
-The agents carry their knowledge via `briefing.skills` (see `.claude/agents/`);
+The agents carry their knowledge via `skills:` (see `.claude/agents/`);
 the main agent delegates rather than loading those skills. Architecture, hardware
 invariants and repo conventions live in skill `tzmrit-display-core`; the two release
 pipelines in `tzmrit-display-packaging`; the karr command surface in
